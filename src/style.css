@@ -1,0 +1,388 @@
+:root {
+  --bg: #f4f6fa;
+  --panel: #ffffff;
+  --panel-2: #f0f3f8;
+  --border: #d8dee9;
+  --text: #1f2733;
+  --muted: #69727f;
+  --accent: #2f6bff;
+  --accent-soft: rgba(47, 107, 255, 0.12);
+  --danger: #e5484d;
+  --player-bg: #e9edf4;
+  --player-surface: linear-gradient(135deg, #dfe6f1, #eef2f8);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* ---------- Header ---------- */
+.app-header {
+  padding: 16px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.app-header h1 {
+  margin: 0;
+  font-size: 18px;
+}
+.brand {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+.brand-vdo {
+  color: #ff7a1a; /* orange */
+  text-transform: uppercase;
+}
+.brand-ps {
+  color: #4f46e5; /* indigo */
+}
+.brand-sep {
+  color: var(--muted);
+  margin: 0 3px;
+  font-weight: 700;
+}
+.app-subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---------- Studio layout ---------- */
+.studio {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 260px 1fr 360px;
+  gap: 1px;
+  background: var(--border);
+  min-height: 0;
+}
+
+.palette-panel,
+.stage-panel,
+.code-panel {
+  background: var(--panel);
+  padding: 14px;
+  overflow: auto;
+  min-width: 0;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+/* ---------- Toolbar ---------- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.toolbar-spacer {
+  flex: 1;
+}
+.toolbar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.color-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.color-picker input[type="color"] {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+.btn {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---------- Palette ---------- */
+.palette-hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 8px 0 12px;
+}
+.chip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: grab;
+  user-select: none;
+}
+.chip:hover {
+  border-color: var(--accent);
+}
+.chip:active {
+  cursor: grabbing;
+}
+.chip.is-dragging {
+  opacity: 0.4;
+}
+.chip-label {
+  font-size: 13px;
+}
+.chip--placed {
+  opacity: 0.5;
+}
+.chip--placed::after {
+  content: "placed";
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.palette-panel.remove--over {
+  outline: 2px dashed var(--danger);
+  outline-offset: -6px;
+}
+
+/* ---------- Stage ---------- */
+.stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  min-height: 480px;
+}
+
+/* .Player — grid template kept exactly per task.md. In the studio it is
+   positioned in-flow and made visible (the spec's embedded default is opacity:0). */
+.Player {
+  /* Theme colors (overridden inline by the toolbar color pickers). */
+  --primary: #1e90ff;
+  --secondary: #ffffff;
+
+  height: 400px;
+  width: 600px;
+  position: relative;
+  display: grid;
+  opacity: 0;
+  padding: 10px;
+  grid-template-columns: 35px 35px 35px 105px auto 35px 35px 35px 35px 35px 35px 35px 35px;
+  grid-template-rows: 40px auto 25px 25px 25px;
+  background: #000 url("/background.jpg") center / cover no-repeat;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(31, 39, 51, 0.18);
+}
+.Player.SHOW-CONTROLS {
+  opacity: 1;
+}
+
+/* The visible video area is the background image itself; this stays transparent
+   but adds a subtle bottom scrim so controls stay legible over the footage. */
+.Player-Visible-Component-Area {
+  grid-area: 1 / 1 / 4 / -1;
+  margin-inline: -10px;
+  margin-top: -10px;
+  position: relative;
+  z-index: 0;
+}
+.Player-Hidden-Component-Area::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0) 55%);
+  pointer-events: none;
+}
+.Player-Hidden-Component-Area {
+  grid-area: 1 / 1 / -1 / -1;
+  z-index: 0;
+}
+
+/* ---------- Drop-zone overlay cells ---------- */
+.cell {
+  z-index: 1;
+  border-radius: 3px;
+  pointer-events: auto;
+}
+/* Grid lines: faded by default, prominent while a control is being dragged. */
+.stage.show-grid .cell {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  transition: box-shadow 0.12s ease;
+}
+body.dnd-active .stage.show-grid .cell {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+}
+.cell.cell--over {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* ---------- Placed controls (flat children of .Player) ---------- */
+/* Icons sit directly on the video — no background. They take the secondary color. */
+.placed-control {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: var(--secondary);
+  cursor: grab;
+  user-select: none;
+}
+.placed-control svg {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+.placed-control:hover {
+  outline: 1px dashed rgba(255, 255, 255, 0.6);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+.placed-control.is-dragging {
+  opacity: 0.4;
+}
+.placed-control.is-resizing {
+  outline: 1px solid var(--primary);
+  border-radius: 4px;
+}
+
+/* VideoProgress: range input only, no icon. Primary color = completion fill. */
+.placed-control--range {
+  padding: 0 4px;
+}
+.control-range {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--primary);
+  pointer-events: none; /* visual only — let the control be dragged/resized */
+}
+
+/* Time controls: text (HH:MM) instead of an icon, in the secondary color. */
+.placed-control--text {
+  overflow: visible;
+}
+.control-text {
+  color: var(--secondary);
+  font: 12px/1 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+.TimeAll .control-text {
+  font-size: 11px;
+}
+
+/* Remove button */
+.control-remove {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 16px;
+  height: 16px;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 50%;
+  border: none;
+  background: var(--danger);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+  z-index: 3;
+}
+.placed-control:hover .control-remove {
+  opacity: 1;
+}
+
+/* Resize handle */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 3;
+  touch-action: none;
+}
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 40%;
+  min-height: 8px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0;
+}
+.placed-control:hover .resize-handle::after {
+  opacity: 0.8;
+}
+
+/* ---------- Code panel ---------- */
+.code-block {
+  margin: 0;
+  padding: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 12px/1.5 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  color: #2b3340;
+  white-space: pre;
+  overflow: auto;
+  max-height: calc(100vh - 160px);
+}
