@@ -21,6 +21,10 @@ export function createPalette(state: PlacementState): HTMLElement {
   const list = el("div", { class: "chip-list" });
   const chips = new Map<GridIdentifier, HTMLElement>();
 
+  // Off-screen holder for the icon-only drag previews. setDragImage needs the
+  // element to be rendered, so it lives in the DOM but out of view.
+  const dragImages = el("div", { class: "drag-image-holder" });
+
   for (const def of CONTROLS) {
     const icon = createElement(def.icon, { width: "18", height: "18" });
     const chip = el("div", { class: "chip", title: def.label }, [
@@ -28,12 +32,19 @@ export function createPalette(state: PlacementState): HTMLElement {
       el("span", { class: "chip-label", text: def.label }),
     ]);
     chip.dataset.id = def.id;
-    makeDraggable(chip, def.id);
+
+    // Drag preview: just the control icon, no text label.
+    const dragImage = el("div", { class: "chip-drag-image" }, [
+      createElement(def.icon, { width: "24", height: "24" }),
+    ]);
+    dragImages.append(dragImage);
+
+    makeDraggable(chip, def.id, dragImage);
     chips.set(def.id, chip);
     list.append(chip);
   }
 
-  panel.append(list);
+  panel.append(list, dragImages);
   makeRemoveTarget(panel, state);
 
   const sync = () => {

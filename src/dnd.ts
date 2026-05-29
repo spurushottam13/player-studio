@@ -1,24 +1,41 @@
-// Native HTML5 drag-and-drop wiring: palette chips + placed controls are sources,
-// overlay cells are drop targets. The dragged control id is kept in a module
-// variable because dataTransfer payloads are not readable during `dragover`.
+// Native HTML5 drag-and-drop wiring: palette chips + placed controls are sources;
+// the player handles drop targeting itself (see ui/player.ts), reading the dragged
+// control id from this module since dataTransfer payloads aren't readable during
+// `dragover`.
 
-import { CONTROL_BY_ID } from "./controls";
 import type { GridIdentifier } from "./controls";
-import { clamp, maxFitSpan } from "./grid";
 import type { PlacementState } from "./state";
 
 const MIME = "application/x-player-control";
 
 let draggingId: GridIdentifier | null = null;
 
-// Make a source element (palette chip or placed control) draggable.
-export function makeDraggable(el: HTMLElement, id: GridIdentifier): void {
+export function getDraggingId(): GridIdentifier | null {
+  return draggingId;
+}
+
+// Force-end the current drag. Needed when a drop commit rebuilds the DOM and
+// removes the drag-source element, in which case its own `dragend` may not fire.
+export function endDrag(): void {
+  draggingId = null;
+  document.body.classList.remove("dnd-active");
+}
+
+// Make a source element (palette chip or placed control) draggable. An optional
+// `dragImage` overrides the browser's default drag preview (e.g. to show just the
+// control icon instead of the whole palette chip with its text label).
+export function makeDraggable(
+  el: HTMLElement,
+  id: GridIdentifier,
+  dragImage?: HTMLElement,
+): void {
   el.setAttribute("draggable", "true");
   el.addEventListener("dragstart", (e) => {
     draggingId = id;
     e.dataTransfer?.setData(MIME, id);
     e.dataTransfer?.setData("text/plain", id);
     if (e.dataTransfer) e.dataTransfer.effectAllowed = "copyMove";
+    if (dragImage && e.dataTransfer) e.dataTransfer.setDragImage(dragImage, 18, 18);
     el.classList.add("is-dragging");
     document.body.classList.add("dnd-active"); // highlight grid while dragging
   });
@@ -26,43 +43,6 @@ export function makeDraggable(el: HTMLElement, id: GridIdentifier): void {
     draggingId = null;
     el.classList.remove("is-dragging");
     document.body.classList.remove("dnd-active");
-  });
-}
-
-// Wire an overlay cell as a drop target at (row, col).
-export function makeDropTarget(
-  cell: HTMLElement,
-  row: number,
-  col: number,
-  state: PlacementState,
-): void {
-  cell.addEventListener("dragover", (e) => {
-    if (!draggingId) return;
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-    cell.classList.add("cell--over");
-  });
-
-  cell.addEventListener("dragleave", () => {
-    cell.classList.remove("cell--over");
-  });
-
-  cell.addEventListener("drop", (e) => {
-    e.preventDefault();
-    cell.classList.remove("cell--over");
-    const id = (e.dataTransfer?.getData(MIME) || draggingId) as GridIdentifier | null;
-    draggingId = null;
-    if (!id) return;
-
-    const def = CONTROL_BY_ID.get(id);
-    if (!def) return;
-
-    // Preserve an existing span when moving; otherwise use the control's default.
-    const existing = state.get(id);
-    const wanted = existing ? existing.colSpan : def.defaultSpan;
-    const colSpan = clamp(wanted, 1, Math.min(def.maxSpan, maxFitSpan(col)));
-
-    state.place(id, { row, col, colSpan });
   });
 }
 

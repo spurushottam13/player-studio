@@ -5,10 +5,10 @@
 import { createElement } from "lucide";
 import { CONTROL_BY_ID } from "../controls";
 import type { GridIdentifier } from "../controls";
-import { makeDraggable, makeDropTarget } from "../dnd";
-import { COLS, ROWS, toGridArea } from "../grid";
+import { endDrag, getDraggingId, makeDraggable } from "../dnd";
+import { clamp, COLS, maxFitSpan, ROWS, toGridArea } from "../grid";
 import { attachResize } from "../resize";
-import type { PlacementState } from "../state";
+import type { Placement, PlacementState } from "../state";
 import { el } from "./dom";
 
 // Time controls render text (HH:MM) instead of an icon; TimeAll shows both.
@@ -78,14 +78,13 @@ export function createPlayer(state: PlacementState): HTMLElement {
   player.append(el("div", { class: "Player-Visible-Component-Area" }));
   player.append(el("div", { class: "Player-Hidden-Component-Area" }));
 
-  // Persistent overlay drop-zone cells.
+  // Persistent overlay of drop-zone cells (grid template comes from CSS .Player).
   for (let row = 1; row <= ROWS; row++) {
     for (let col = 1; col <= COLS; col++) {
       const cell = el("div", { class: "cell" });
       cell.dataset.row = String(row);
       cell.dataset.col = String(col);
       cell.style.gridArea = toGridArea(row, col, 1);
-      makeDropTarget(cell, row, col, state);
       player.append(cell);
     }
   }
@@ -97,9 +96,19 @@ export function createPlayer(state: PlacementState): HTMLElement {
     stage.classList.toggle("show-grid", showGridInput.checked);
   });
 
+  // Live registry of the rendered control elements (used by the drag preview).
+  const placedEls = new Map<GridIdentifier, HTMLElement>();
+
+  // A translucent placeholder showing where a control dragged from the palette
+  // will land during the live preview.
+  const ghost = el("div", { class: "drop-ghost" });
+  ghost.style.display = "none";
+  player.append(ghost);
+
   // Rebuild placed controls on every state change.
   const renderPlaced = () => {
     player.querySelectorAll(".placed-control").forEach((n) => n.remove());
+    placedEls.clear();
 
     for (const [id, placement] of state.entries()) {
       const def = CONTROL_BY_ID.get(id);
@@ -108,6 +117,7 @@ export function createPlayer(state: PlacementState): HTMLElement {
       const control = el("div", { class: `placed-control ${id}`, title: def.label });
       control.style.gridArea = toGridArea(placement.row, placement.col, placement.colSpan);
       makeDraggable(control, id);
+      placedEls.set(id, control);
 
       if (id === "VideoProgress") {
         // VideoProgress is a range input only — no icon.
@@ -146,6 +156,103 @@ export function createPlayer(state: PlacementState): HTMLElement {
       player.append(control);
     }
   };
+
+  // ---- Live drag preview ----
+  // Map a viewport point to the grid cell (row, col) under it via the fixed cell
+  // overlay. Cells never move, so targeting stays stable while icons reflow.
+  const cellAtPoint = (x: number, y: number): { row: number; col: number } => {
+    const cells = player.querySelectorAll<HTMLElement>(".cell");
+    let row = 1;
+    let col = 1;
+    let best = Infinity;
+    for (const cell of cells) {
+      const r = cell.getBoundingClientRect();
+      if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) {
+        return { row: Number(cell.dataset.row), col: Number(cell.dataset.col) };
+      }
+      const dx = Math.max(r.left - x, x - r.right, 0);
+      const dy = Math.max(r.top - y, y - r.bottom, 0);
+      const d = dx * dx + dy * dy;
+      if (d < best) {
+        best = d;
+        row = Number(cell.dataset.row);
+        col = Number(cell.dataset.col);
+      }
+    }
+    return { row, col };
+  };
+
+  // Resolve the dragged control + the placement a drop at (row, col) implies.
+  const resolveDrop = (
+    row: number,
+    col: number,
+  ): { id: GridIdentifier; placement: Placement } | null => {
+    const id = getDraggingId();
+    if (!id) return null;
+    const def = CONTROL_BY_ID.get(id);
+    if (!def) return null;
+    const existing = state.get(id);
+    const wanted = existing ? existing.colSpan : def.defaultSpan;
+    const colSpan = clamp(wanted, 1, Math.min(def.maxSpan, maxFitSpan(col)));
+    return { id, placement: { row, col, colSpan } };
+  };
+
+  // Position elements to match a proposed layout (live preview).
+  const applyLayout = (layout: Map<GridIdentifier, Placement>, draggingId: GridIdentifier) => {
+    for (const [id, elem] of placedEls) {
+      const pl = layout.get(id);
+      if (pl) elem.style.gridArea = toGridArea(pl.row, pl.col, pl.colSpan);
+    }
+    const dragged = layout.get(draggingId);
+    if (dragged && !placedEls.has(draggingId)) {
+      // Coming from the palette — show a ghost where it would land.
+      ghost.style.gridArea = toGridArea(dragged.row, dragged.col, dragged.colSpan);
+      ghost.style.display = "";
+    } else {
+      ghost.style.display = "none";
+    }
+  };
+
+  // Restore every control to its committed (state) position.
+  const revertPreview = () => {
+    for (const [id, elem] of placedEls) {
+      const pl = state.get(id);
+      if (pl) elem.style.gridArea = toGridArea(pl.row, pl.col, pl.colSpan);
+    }
+    ghost.style.display = "none";
+  };
+
+  player.addEventListener("dragover", (e) => {
+    if (!getDraggingId()) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    const { row, col } = cellAtPoint(e.clientX, e.clientY);
+    const d = resolveDrop(row, col);
+    if (!d) return;
+    const layout = state.previewShift(d.id, d.placement);
+    if (layout) applyLayout(layout, d.id);
+    else revertPreview(); // can't fit — keep originals in place
+  });
+
+  player.addEventListener("drop", (e) => {
+    const { row, col } = cellAtPoint(e.clientX, e.clientY);
+    const d = resolveDrop(row, col);
+    if (!d) return;
+    e.preventDefault();
+    state.placeShifting(d.id, d.placement); // commit (rebuilds via subscribe)
+    endDrag();
+    ghost.style.display = "none";
+  });
+
+  // Leaving the player area (e.g. heading back to the palette) snaps icons back.
+  player.addEventListener("dragleave", (e) => {
+    const to = e.relatedTarget as Node | null;
+    if (to && player.contains(to)) return; // still moving inside the player
+    revertPreview();
+  });
+
+  // A drag that ends without a committed drop (released outside / cancelled).
+  document.addEventListener("dragend", revertPreview);
 
   state.subscribe(renderPlaced);
   renderPlaced();
