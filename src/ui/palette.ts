@@ -1,42 +1,34 @@
-// Left panel: the 21 draggable control chips. Also acts as a remove target —
-// drag a placed control back here to take it off the player.
+// Left panel: the 21 draggable control chips. Shared across all modes. Also acts
+// as a remove target — drag a placed control back here to take it off the player.
+// "Placed" state and removal follow whichever mode is currently active.
 
 import { createElement } from "lucide";
 import { CONTROLS } from "../controls";
 import type { GridIdentifier } from "../controls";
 import { makeDraggable, makeRemoveTarget } from "../dnd";
-import type { PlacementState } from "../state";
+import type { Studio } from "../studio";
 import { el } from "./dom";
 
-export function createPalette(state: PlacementState): HTMLElement {
+export function createPalette(studio: Studio): HTMLElement {
   const panel = el("aside", { class: "palette-panel" });
   panel.append(el("h2", { class: "panel-title", text: "Controls" }));
-
-  const hint = el("p", {
-    class: "palette-hint",
-    text: "Drag a control onto the player. Drag a placed control back here to remove it.",
-  });
-  panel.append(hint);
+  panel.append(
+    el("p", {
+      class: "palette-hint",
+      text: "Drag a control onto the player. Drag a placed control back here to remove it.",
+    }),
+  );
 
   const list = el("div", { class: "chip-list" });
   const chips = new Map<GridIdentifier, HTMLElement>();
-
-  // Off-screen holder for the icon-only drag previews. setDragImage needs the
-  // element to be rendered, so it lives in the DOM but out of view.
   const dragImages = el("div", { class: "drag-image-holder" });
 
   for (const def of CONTROLS) {
     const icon = createElement(def.icon, { width: "18", height: "18" });
-    const chip = el("div", { class: "chip", title: def.label }, [
-      icon,
-      el("span", { class: "chip-label", text: def.label }),
-    ]);
+    const chip = el("div", { class: "chip", title: def.label }, [icon, el("span", { class: "chip-label", text: def.label })]);
     chip.dataset.id = def.id;
 
-    // Drag preview: just the control icon, no text label.
-    const dragImage = el("div", { class: "chip-drag-image" }, [
-      createElement(def.icon, { width: "24", height: "24" }),
-    ]);
+    const dragImage = el("div", { class: "chip-drag-image" }, [createElement(def.icon, { width: "24", height: "24" })]);
     dragImages.append(dragImage);
 
     makeDraggable(chip, def.id, dragImage);
@@ -45,12 +37,18 @@ export function createPalette(state: PlacementState): HTMLElement {
   }
 
   panel.append(list, dragImages);
-  makeRemoveTarget(panel, state);
+
+  // Remove target + placed-state both proxy to the active editor.
+  makeRemoveTarget(panel, {
+    has: (id) => studio.active().has(id),
+    remove: (id) => studio.active().remove(id),
+  });
 
   const sync = () => {
-    for (const [id, chip] of chips) chip.classList.toggle("chip--placed", state.has(id));
+    const active = studio.active();
+    for (const [id, chip] of chips) chip.classList.toggle("chip--placed", active.has(id));
   };
-  state.subscribe(sync);
+  studio.onChange(sync);
   sync();
 
   return panel;

@@ -1,5 +1,7 @@
 // Single source of truth for the 21 player controls.
-// Each control maps its gridIdentifier (== CSS class) to a Lucide icon and span hints.
+// Each control maps its gridIdentifier (the stable cross-platform id) to a Lucide
+// icon and a render kind. The kind drives both how the studio renders the control
+// and how it is exported in player.json (see spec.md §6).
 
 import {
   Airplay,
@@ -48,43 +50,54 @@ export type GridIdentifier =
   | "VideoProgress"
   | "Volume";
 
+// icon   — a single Lucide glyph (most controls)
+// text   — a HH:MM style readout (the Time controls)
+// slider — a horizontal range that fills available width (progress / volume)
+export type ControlKind = "icon" | "text" | "slider";
+
 export interface ControlDef {
-  id: GridIdentifier; // == CSS class
+  id: GridIdentifier; // the cross-platform contract id
   label: string;
   icon: IconNode; // pass to lucide createElement()
-  defaultSpan: number; // cells consumed on first drop (most = 1)
-  maxSpan: number; // resize cap; Number.POSITIVE_INFINITY = to grid edge
+  kind: ControlKind;
+  text?: string; // display string for kind === "text"
+  // Grid mode only: cells consumed on first drop, and the horizontal resize cap
+  // (Number.POSITIVE_INFINITY = to the grid edge). Ignored by region/free modes.
+  defaultSpan: number;
+  maxSpan: number;
 }
 
 const INF = Number.POSITIVE_INFINITY;
 
-// Most controls are single-cell, icon-only, and not resizable (maxSpan: 1).
-// The time controls, Volume, and VideoProgress can be extended horizontally.
 export const CONTROLS: readonly ControlDef[] = [
-  { id: "AirPlay", label: "AirPlay", icon: Airplay, defaultSpan: 1, maxSpan: 1 },
-  { id: "Backward", label: "Backward", icon: Rewind, defaultSpan: 1, maxSpan: 1 },
-  { id: "CaptionSearch", label: "CaptionSearch", icon: TextSearch, defaultSpan: 1, maxSpan: 1 },
-  { id: "Captions", label: "Captions", icon: Captions, defaultSpan: 1, maxSpan: 1 },
-  { id: "Cast", label: "Cast", icon: Cast, defaultSpan: 1, maxSpan: 1 },
-  { id: "Chapters", label: "Chapters", icon: ListVideo, defaultSpan: 1, maxSpan: 1 },
-  { id: "Forward", label: "Forward", icon: FastForward, defaultSpan: 1, maxSpan: 1 },
-  { id: "FullScreen", label: "FullScreen", icon: Fullscreen, defaultSpan: 1, maxSpan: 1 },
-  { id: "Notification", label: "Notification", icon: Bell, defaultSpan: 1, maxSpan: 1 },
-  { id: "PictureInPicture", label: "PictureInPicture", icon: PictureInPicture, defaultSpan: 1, maxSpan: 1 },
-  { id: "PlayNPause", label: "PlayNPause", icon: Play, defaultSpan: 1, maxSpan: 1 },
-  { id: "Quality", label: "Quality", icon: Gauge, defaultSpan: 1, maxSpan: 1 },
-  { id: "SaveVideoOffline", label: "SaveVideoOffline", icon: Download, defaultSpan: 1, maxSpan: 1 },
-  { id: "Setting", label: "Setting", icon: Settings, defaultSpan: 1, maxSpan: 1 },
-  { id: "Speed", label: "Speed", icon: Timer, defaultSpan: 1, maxSpan: 1 },
-  { id: "TimeConsumed", label: "TimeConsumed", icon: Clock, defaultSpan: 2, maxSpan: 4 },
-  { id: "TimeLeft", label: "TimeLeft", icon: ClockArrowDown, defaultSpan: 2, maxSpan: 4 },
-  { id: "TimeDuration", label: "TimeDuration", icon: Clock3, defaultSpan: 2, maxSpan: 4 },
-  { id: "TimeAll", label: "TimeAll", icon: Clock, defaultSpan: 3, maxSpan: 6 },
-  // Extendable controls — resizable horizontally across the grid.
-  { id: "VideoProgress", label: "VideoProgress", icon: SlidersHorizontal, defaultSpan: 5, maxSpan: INF },
-  { id: "Volume", label: "Volume", icon: Volume2, defaultSpan: 3, maxSpan: INF },
+  { id: "AirPlay", label: "AirPlay", icon: Airplay, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "Backward", label: "Backward", icon: Rewind, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "CaptionSearch", label: "CaptionSearch", icon: TextSearch, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "Captions", label: "Captions", icon: Captions, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "Cast", label: "Cast", icon: Cast, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "Chapters", label: "Chapters", icon: ListVideo, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "Forward", label: "Forward", icon: FastForward, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "FullScreen", label: "FullScreen", icon: Fullscreen, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "Notification", label: "Notification", icon: Bell, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "PictureInPicture", label: "PictureInPicture", icon: PictureInPicture, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "PlayNPause", label: "PlayNPause", icon: Play, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "Quality", label: "Quality", icon: Gauge, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "SaveVideoOffline", label: "SaveVideoOffline", icon: Download, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "Setting", label: "Setting", icon: Settings, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "Speed", label: "Speed", icon: Timer, kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  { id: "TimeConsumed", label: "TimeConsumed", icon: Clock, kind: "text", text: "00:00", defaultSpan: 2, maxSpan: 4 },
+  { id: "TimeLeft", label: "TimeLeft", icon: ClockArrowDown, kind: "text", text: "00:00", defaultSpan: 2, maxSpan: 4 },
+  { id: "TimeDuration", label: "TimeDuration", icon: Clock3, kind: "text", text: "00:00", defaultSpan: 2, maxSpan: 4 },
+  { id: "TimeAll", label: "TimeAll", icon: Clock, kind: "text", text: "00:00 / 00:00", defaultSpan: 3, maxSpan: 6 },
+  // Sliders — render at flex width; export with align "fill" (region) / fraction (free).
+  { id: "VideoProgress", label: "VideoProgress", icon: SlidersHorizontal, kind: "slider", defaultSpan: 5, maxSpan: INF },
+  { id: "Volume", label: "Volume", icon: Volume2, kind: "slider", defaultSpan: 3, maxSpan: INF },
 ] as const;
 
 export const CONTROL_BY_ID: ReadonlyMap<GridIdentifier, ControlDef> = new Map(
   CONTROLS.map((c) => [c.id, c]),
 );
+
+export function isFill(id: GridIdentifier): boolean {
+  return CONTROL_BY_ID.get(id)?.kind === "slider";
+}

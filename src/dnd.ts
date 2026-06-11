@@ -4,7 +4,12 @@
 // `dragover`.
 
 import type { GridIdentifier } from "./controls";
-import type { PlacementState } from "./state";
+
+// Minimal surface a remove target needs — any active editor satisfies this.
+export interface RemoveTarget {
+  has(id: GridIdentifier): boolean;
+  remove(id: GridIdentifier): void;
+}
 
 const MIME = "application/x-player-control";
 
@@ -47,7 +52,7 @@ export function makeDraggable(
 }
 
 // Wire a drop zone (e.g. the palette) that removes a placed control.
-export function makeRemoveTarget(el: HTMLElement, state: PlacementState): void {
+export function makeRemoveTarget(el: HTMLElement, state: RemoveTarget): void {
   el.addEventListener("dragover", (e) => {
     if (!draggingId) return;
     e.preventDefault();

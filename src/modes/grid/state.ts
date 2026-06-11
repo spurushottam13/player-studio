@@ -1,8 +1,11 @@
-// Placement state: which controls are placed, where, and how wide.
-// Simple pub/sub so palette, player and code panel can re-render on change.
+// Grid mode state: which controls are placed, at which cell (row/col), and how
+// wide (colSpan). Dropping reflows same-row neighbours so nothing overlaps. See
+// old_spec.md.
 
-import type { GridIdentifier } from "./controls";
-import { COLS } from "./grid";
+import type { GridIdentifier } from "../../controls";
+import { DEFAULT_THEME } from "../types";
+import type { Theme } from "../types";
+import { COLS } from "./geometry";
 
 export interface Placement {
   row: number;
@@ -11,10 +14,8 @@ export interface Placement {
 }
 
 type Listener = () => void;
+const STORAGE_KEY = "player-studio:grid-layout";
 
-const STORAGE_KEY = "player-studio:placements";
-
-// Default player layout, applied on first load (when nothing is saved yet).
 export const DEFAULT_LAYOUT: Partial<Record<GridIdentifier, Placement>> = {
   Backward: { row: 4, col: 1, colSpan: 1 },
   PlayNPause: { row: 4, col: 2, colSpan: 1 },
@@ -28,32 +29,21 @@ export const DEFAULT_LAYOUT: Partial<Record<GridIdentifier, Placement>> = {
   FullScreen: { row: 5, col: 13, colSpan: 1 },
 };
 
-export class PlacementState {
+export class GridState {
   private map = new Map<GridIdentifier, Placement>();
+  private theme: Theme = { ...DEFAULT_THEME };
   private listeners = new Set<Listener>();
 
-  constructor(load = true) {
-    if (load) this.load();
+  constructor() {
+    this.load();
   }
 
-  place(id: GridIdentifier, p: Placement): void {
-    this.map.set(id, { ...p });
-    this.changed();
-  }
-
-  // Pure: compute the full placement map that would result from inserting `id`
-  // at `p`, reflowing same-row neighbors so nothing overlaps. Returns a fresh
-  // map (cloned placements — safe to read without touching live state), or null
-  // if the row genuinely can't fit the control. Used for both the live drag
-  // preview and the committed drop.
-  //
-  // Strategy: push the controls at/after the drop point right (keeping gaps); if
-  // that runs off the grid, tighten them; if it still overflows, slide the
-  // inserted control and the left-side controls left to absorb the overflow.
+  // Pure: compute the full placement map that would result from inserting `id` at
+  // `p`, reflowing same-row neighbours so nothing overlaps. Returns a fresh map or
+  // null if the row can't fit the control.
   computeShift(id: GridIdentifier, p: Placement): Map<GridIdentifier, Placement> | null {
     const { row, col, colSpan } = p;
     const cols = COLS;
-
     const next = new Map<GridIdentifier, Placement>();
     for (const [k, v] of this.map) if (k !== id) next.set(k, { ...v });
 
@@ -61,11 +51,9 @@ export class PlacementState {
       .filter(([, q]) => q.row === row)
       .map(([oid, q]) => ({ id: oid, col: q.col, span: q.colSpan }))
       .sort((a, b) => a.col - b.col);
+    const left = others.filter((o) => o.col < col);
+    const right = others.filter((o) => o.col >= col);
 
-    const left = others.filter((o) => o.col < col); // stay left of the insert
-    const right = others.filter((o) => o.col >= col); // pushed right of the insert
-
-    // Lay out the right-side controls starting just after the inserted control.
     const packRight = (insertStart: number, preserveGaps: boolean): { starts: number[]; end: number } => {
       const starts: number[] = [];
       let cursor = insertStart + colSpan;
@@ -90,52 +78,36 @@ export class PlacementState {
       if (tight.end <= cols) {
         rightStarts = tight.starts;
       } else {
-        // Slide the inserted control left by the overflow, then re-pack.
         const overflow = tight.end - cols;
         insertStart = col - overflow;
         if (insertStart < 1) return null;
-
         rightStarts = packRight(insertStart, false).starts;
-
-        // Pack the left-side controls so each ends before the insert point.
         leftStarts = new Array(left.length);
         let limit = insertStart;
         for (let i = left.length - 1; i >= 0; i--) {
           const s = Math.min(left[i].col, limit - left[i].span);
-          if (s < 1) return null; // no room on the left either
+          if (s < 1) return null;
           leftStarts[i] = s;
           limit = s;
         }
       }
     }
 
-    if (leftStarts) {
-      left.forEach((o, i) => {
-        next.get(o.id)!.col = leftStarts![i];
-      });
-    }
-    right.forEach((o, i) => {
-      next.get(o.id)!.col = rightStarts[i];
-    });
-
+    if (leftStarts) left.forEach((o, i) => (next.get(o.id)!.col = leftStarts![i]));
+    right.forEach((o, i) => (next.get(o.id)!.col = rightStarts[i]));
     next.set(id, { ...p, col: insertStart });
     return next;
   }
 
-  // Non-committing: the layout a drop at `p` would produce (or null if it can't
-  // fit). Does not mutate state or notify listeners.
   previewShift(id: GridIdentifier, p: Placement): Map<GridIdentifier, Placement> | null {
     return this.computeShift(id, p);
   }
-
-  // Commit an insert-with-reflow drop. No-op if the row can't fit the control.
   placeShifting(id: GridIdentifier, p: Placement): void {
     const next = this.computeShift(id, p);
     if (!next) return;
     this.map = next;
     this.changed();
   }
-
   resize(id: GridIdentifier, colSpan: number): void {
     const p = this.map.get(id);
     if (p && p.colSpan !== colSpan) {
@@ -143,61 +115,57 @@ export class PlacementState {
       this.changed();
     }
   }
-
   remove(id: GridIdentifier): void {
     if (this.map.delete(id)) this.changed();
   }
-
   clear(): void {
     if (this.map.size > 0) {
       this.map.clear();
       this.changed();
     }
   }
-
   resetToDefault(): void {
     this.map.clear();
     this.applyDefault();
+    this.theme = { ...DEFAULT_THEME };
     this.changed();
   }
-
   private applyDefault(): void {
-    for (const [id, p] of Object.entries(DEFAULT_LAYOUT)) {
-      if (p) this.map.set(id as GridIdentifier, { ...p });
-    }
+    for (const [id, p] of Object.entries(DEFAULT_LAYOUT)) if (p) this.map.set(id as GridIdentifier, { ...p });
   }
 
   get(id: GridIdentifier): Placement | undefined {
     return this.map.get(id);
   }
-
   has(id: GridIdentifier): boolean {
     return this.map.has(id);
   }
-
   entries(): [GridIdentifier, Placement][] {
     return [...this.map.entries()];
+  }
+  getTheme(): Theme {
+    return { ...this.theme };
+  }
+  setTheme(partial: Partial<Theme>): void {
+    this.theme = { ...this.theme, ...partial };
+    this.changed();
   }
 
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
-
   private changed(): void {
     this.save();
     for (const fn of this.listeners) fn();
   }
-
   private save(): void {
     try {
-      const obj = Object.fromEntries(this.map);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ controls: Object.fromEntries(this.map), theme: this.theme }));
     } catch {
-      // ignore storage failures (private mode, quota, etc.)
+      /* ignore */
     }
   }
-
   private load(): void {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -205,28 +173,22 @@ export class PlacementState {
         this.applyDefault();
         return;
       }
-      const parsed = JSON.parse(raw) as
-        | Record<string, Placement>
-        | { placements: Record<string, Placement> };
-
-      // Tolerate the older wrapped shape ({ placements, ... }) if present.
-      const placements = (
-        parsed && typeof parsed === "object" && "placements" in parsed
-          ? parsed.placements
-          : parsed
-      ) as Record<string, Placement>;
-
-      for (const [id, p] of Object.entries(placements)) {
+      const parsed = JSON.parse(raw) as { controls?: Record<string, Placement>; theme?: Partial<Theme> };
+      const controls = parsed.controls ?? {};
+      for (const [id, p] of Object.entries(controls)) {
         if (p && typeof p.row === "number" && typeof p.col === "number") {
-          this.map.set(id as GridIdentifier, {
-            row: p.row,
-            col: p.col,
-            colSpan: typeof p.colSpan === "number" ? p.colSpan : 1,
-          });
+          this.map.set(id as GridIdentifier, { row: p.row, col: p.col, colSpan: typeof p.colSpan === "number" ? p.colSpan : 1 });
         }
       }
+      if (this.map.size === 0) this.applyDefault();
+      if (parsed.theme) {
+        this.theme = {
+          primary: parsed.theme.primary ?? DEFAULT_THEME.primary,
+          secondary: parsed.theme.secondary ?? DEFAULT_THEME.secondary,
+        };
+      }
     } catch {
-      // ignore malformed storage
+      this.applyDefault();
     }
   }
 }
