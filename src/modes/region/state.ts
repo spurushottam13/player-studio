@@ -36,7 +36,7 @@ function emptyRegions(): Regions {
 }
 function defaultRegions(): Regions {
   return {
-    top: [emptyRow({ end: ["PictureInPicture", ""] })],
+    top: [emptyRow({ end: ["PictureInPicture"] })],
     center: [],
     bottom: [
       emptyRow({ start: ["VideoProgress"] }),
