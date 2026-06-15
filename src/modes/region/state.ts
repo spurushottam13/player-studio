@@ -1,15 +1,22 @@
-// Region mode state: regions (top | center | bottom) → rows (stacked) → lanes
-// (start | center | end), each an ordered list of control ids. A control appears
-// at most once; empty rows are pruned. See spec.md.
+// Region mode state: a layout per VIEWPORT (default | 490 | 300 | 200). Each
+// viewport is regions (top | center | bottom) → rows (stacked) → lanes
+// (start | center | end), each an ordered list of control ids, PLUS a
+// `collapse` list of icon ids folded into the Setting menu. A control appears at
+// most once across a viewport's regions AND its collapse list; empty rows are
+// pruned. The Setting icon's presence in a viewport is fully derived from that
+// viewport's collapse list (see reconcileSetting). See spec.md.
 
 import type { GridIdentifier } from "../../controls";
+import { CONTROL_BY_ID } from "../../controls";
 import { DEFAULT_THEME } from "../types";
 import type { Theme } from "../types";
 
 export type Lane = "start" | "center" | "end";
 export type RegionName = "top" | "center" | "bottom";
+export type Viewport = "default" | "490" | "300" | "200";
 export const REGION_NAMES: readonly RegionName[] = ["top", "center", "bottom"];
 export const LANES: readonly Lane[] = ["start", "center", "end"];
+export const VIEWPORTS: readonly Viewport[] = ["default", "490", "300", "200"];
 
 export interface Row {
   start: GridIdentifier[];
@@ -17,6 +24,13 @@ export interface Row {
   end: GridIdentifier[];
 }
 export type Regions = Record<RegionName, Row[]>;
+
+// One viewport's design: the placed regions plus the icons collapsed into Setting.
+export interface ViewportLayout {
+  regions: Regions;
+  collapse: GridIdentifier[];
+}
+type Layouts = Record<Viewport, ViewportLayout>;
 
 export interface ItemPath {
   region: RegionName;
@@ -28,11 +42,23 @@ export interface ItemPath {
 type Listener = () => void;
 const STORAGE_KEY = "player-studio:region-layout";
 
+// A control may be collapsed into Setting only if it is an icon and is not the
+// Setting control itself (Setting is the collapse container, not collapsible).
+export function isCollapsible(id: GridIdentifier): boolean {
+  return id !== "Setting" && CONTROL_BY_ID.get(id)?.kind === "icon";
+}
+
 function emptyRow(partial: Partial<Row> = {}): Row {
   return { start: [], center: [], end: [], ...partial };
 }
 function emptyRegions(): Regions {
   return { top: [], center: [], bottom: [] };
+}
+function emptyLayout(): ViewportLayout {
+  return { regions: emptyRegions(), collapse: [] };
+}
+function emptyLayouts(): Layouts {
+  return { default: emptyLayout(), "490": emptyLayout(), "300": emptyLayout(), "200": emptyLayout() };
 }
 function defaultRegions(): Regions {
   return {
@@ -48,11 +74,19 @@ function defaultRegions(): Regions {
     ],
   };
 }
+// Reset seeds only the default viewport with the canonical layout; narrow
+// viewports start blank (authored from scratch — see plan).
+function defaultLayouts(): Layouts {
+  const l = emptyLayouts();
+  l.default = { regions: defaultRegions(), collapse: [] };
+  return l;
+}
 const clamp = (v: number, min: number, max: number) =>
   Math.min(Math.max(v, min), max);
 
 export class RegionState {
-  private regions: Regions = emptyRegions();
+  private layouts: Layouts = emptyLayouts();
+  private activeViewport: Viewport = "default";
   private theme: Theme = { ...DEFAULT_THEME };
   private listeners = new Set<Listener>();
 
@@ -60,15 +94,44 @@ export class RegionState {
     this.load();
   }
 
+  // ---- active-viewport accessors -----------------------------------------
+  private active(): ViewportLayout {
+    return this.layouts[this.activeViewport];
+  }
+  private activeRegions(): Regions {
+    return this.active().regions;
+  }
+
+  getViewports(): readonly Viewport[] {
+    return VIEWPORTS;
+  }
+  getViewport(): Viewport {
+    return this.activeViewport;
+  }
+  setViewport(v: Viewport): void {
+    if (v === this.activeViewport || !VIEWPORTS.includes(v)) return;
+    this.activeViewport = v;
+    // No mutation to persist beyond the active pointer; reuse changed().
+    this.changed();
+  }
+
   rows(region: RegionName): Row[] {
-    return this.regions[region];
+    return this.activeRegions()[region];
+  }
+  // Non-mutating reads of any viewport, for serialization (don't switch active).
+  rowsOf(vp: Viewport, region: RegionName): Row[] {
+    return this.layouts[vp].regions[region];
+  }
+  collapsedOf(vp: Viewport): GridIdentifier[] {
+    return [...this.layouts[vp].collapse];
   }
   getTheme(): Theme {
     return { ...this.theme };
   }
   find(id: GridIdentifier): ItemPath | null {
+    const regions = this.activeRegions();
     for (const region of REGION_NAMES) {
-      const rows = this.regions[region];
+      const rows = regions[region];
       for (let row = 0; row < rows.length; row++) {
         for (const lane of LANES) {
           const index = rows[row][lane].indexOf(id);
@@ -78,15 +141,17 @@ export class RegionState {
     }
     return null;
   }
+  // Placed anywhere in this viewport: on the bar OR collapsed into Setting.
   has(id: GridIdentifier): boolean {
-    return this.find(id) !== null;
+    return this.find(id) !== null || this.isCollapsed(id);
   }
 
   place(id: GridIdentifier, target: ItemPath): void {
+    this.dropFromCollapse(id);
     let insertIndex = target.index;
     const cur = this.find(id);
     if (cur) {
-      this.regions[cur.region][cur.row][cur.lane].splice(cur.index, 1);
+      this.activeRegions()[cur.region][cur.row][cur.lane].splice(cur.index, 1);
       if (
         cur.region === target.region &&
         cur.row === target.row &&
@@ -96,7 +161,7 @@ export class RegionState {
         insertIndex--;
       }
     }
-    const targetRow = this.regions[target.region][target.row];
+    const targetRow = this.activeRegions()[target.region][target.row];
     if (!targetRow) return;
     const arr = targetRow[target.lane];
     arr.splice(clamp(insertIndex, 0, arr.length), 0, id);
@@ -110,42 +175,91 @@ export class RegionState {
     atRow: number,
     lane: Lane = "start",
   ): void {
+    this.dropFromCollapse(id);
     const cur = this.find(id);
-    if (cur) this.regions[cur.region][cur.row][cur.lane].splice(cur.index, 1);
+    if (cur) this.activeRegions()[cur.region][cur.row][cur.lane].splice(cur.index, 1);
     const row = emptyRow();
     row[lane].push(id);
-    const rows = this.regions[region];
+    const rows = this.activeRegions()[region];
     rows.splice(clamp(atRow, 0, rows.length), 0, row);
     this.pruneEmptyRows();
     this.changed();
   }
 
   remove(id: GridIdentifier): void {
+    const collapsed = this.dropFromCollapse(id);
     const cur = this.find(id);
-    if (!cur) return;
-    this.regions[cur.region][cur.row][cur.lane].splice(cur.index, 1);
+    if (!cur && !collapsed) return;
+    if (cur) this.activeRegions()[cur.region][cur.row][cur.lane].splice(cur.index, 1);
     this.pruneEmptyRows();
     this.changed();
   }
+
+  // ---- collapse-in-Setting API -------------------------------------------
+  getCollapsed(): GridIdentifier[] {
+    return [...this.active().collapse];
+  }
+  isCollapsed(id: GridIdentifier): boolean {
+    return this.active().collapse.includes(id);
+  }
+  // Move a control off the bar and into the Setting menu (active viewport).
+  collapse(id: GridIdentifier): void {
+    if (!isCollapsible(id) || this.isCollapsed(id)) return;
+    const cur = this.find(id);
+    if (cur) this.activeRegions()[cur.region][cur.row][cur.lane].splice(cur.index, 1);
+    this.active().collapse.push(id);
+    this.pruneEmptyRows();
+    this.changed();
+  }
+  // Take a control back out of the Setting menu (does not re-place it on the bar).
+  uncollapse(id: GridIdentifier): void {
+    if (this.dropFromCollapse(id)) this.changed();
+  }
+  // Remove id from the active collapse list; returns whether it was there.
+  private dropFromCollapse(id: GridIdentifier): boolean {
+    const list = this.active().collapse;
+    const i = list.indexOf(id);
+    if (i === -1) return false;
+    list.splice(i, 1);
+    return true;
+  }
+
   setTheme(partial: Partial<Theme>): void {
     this.theme = { ...this.theme, ...partial };
     this.changed();
   }
   clear(): void {
-    this.regions = emptyRegions();
+    this.layouts[this.activeViewport] = emptyLayout();
     this.changed();
   }
   resetToDefault(): void {
-    this.regions = defaultRegions();
+    this.layouts = defaultLayouts();
     this.theme = { ...DEFAULT_THEME };
     this.changed();
   }
 
   private pruneEmptyRows(): void {
+    const regions = this.activeRegions();
     for (const region of REGION_NAMES) {
-      this.regions[region] = this.regions[region].filter(
+      regions[region] = regions[region].filter(
         (r) => r.start.length || r.center.length || r.end.length,
       );
+    }
+  }
+
+  // Setting is mandatory iff this viewport has collapsed icons. Auto-place it in
+  // the last bottom row's end lane when needed; strip it when the list empties.
+  private reconcileSetting(): void {
+    const layout = this.active();
+    const wantSetting = layout.collapse.length > 0;
+    const cur = this.find("Setting");
+    if (wantSetting && !cur) {
+      const bottom = layout.regions.bottom;
+      if (bottom.length === 0) bottom.push(emptyRow());
+      bottom[bottom.length - 1].end.push("Setting");
+    } else if (!wantSetting && cur) {
+      layout.regions[cur.region][cur.row][cur.lane].splice(cur.index, 1);
+      this.pruneEmptyRows();
     }
   }
 
@@ -154,6 +268,7 @@ export class RegionState {
     return () => this.listeners.delete(fn);
   }
   private changed(): void {
+    this.reconcileSetting();
     this.save();
     for (const fn of this.listeners) fn();
   }
@@ -161,7 +276,7 @@ export class RegionState {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ regions: this.regions, theme: this.theme }),
+        JSON.stringify({ layouts: this.layouts, theme: this.theme, active: this.activeViewport }),
       );
     } catch {
       /* ignore */
@@ -171,29 +286,52 @@ export class RegionState {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) {
-        this.regions = defaultRegions();
+        this.layouts = defaultLayouts();
         return;
       }
-      const parsed = JSON.parse(raw) as {
-        regions?: unknown;
-        theme?: Partial<Theme>;
-      };
-      this.regions = sanitizeRegions(parsed.regions);
-      if (parsed.theme) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      this.layouts = sanitizeLayouts(parsed);
+      const active = parsed.active as Viewport | undefined;
+      if (active && VIEWPORTS.includes(active)) this.activeViewport = active;
+      const theme = parsed.theme as Partial<Theme> | undefined;
+      if (theme) {
         this.theme = {
-          primary: parsed.theme.primary ?? DEFAULT_THEME.primary,
-          secondary: parsed.theme.secondary ?? DEFAULT_THEME.secondary,
+          primary: theme.primary ?? DEFAULT_THEME.primary,
+          secondary: theme.secondary ?? DEFAULT_THEME.secondary,
         };
       }
     } catch {
-      this.regions = defaultRegions();
+      this.layouts = defaultLayouts();
     }
   }
 }
 
+// Accept both the new `{ layouts }` shape and the legacy `{ regions }` shape
+// (migrated into the default viewport, narrow viewports left blank).
+function sanitizeLayouts(value: Record<string, unknown>): Layouts {
+  const out = emptyLayouts();
+  if (value && typeof value.layouts === "object" && value.layouts) {
+    const src = value.layouts as Record<string, unknown>;
+    for (const vp of VIEWPORTS) {
+      const entry = (src[vp] ?? {}) as Record<string, unknown>;
+      out[vp] = {
+        regions: sanitizeRegions(entry.regions),
+        collapse: collapseList(entry.collapse),
+      };
+    }
+    return out;
+  }
+  // Legacy migration: top-level `regions` → default viewport.
+  if (value && typeof value.regions === "object") {
+    out.default = { regions: sanitizeRegions(value.regions), collapse: [] };
+    return out;
+  }
+  return defaultLayouts();
+}
+
 function sanitizeRegions(value: unknown): Regions {
   const out = emptyRegions();
-  if (!value || typeof value !== "object") return defaultRegions();
+  if (!value || typeof value !== "object") return out;
   const v = value as Record<string, unknown>;
   for (const region of REGION_NAMES) {
     const rows = Array.isArray(v[region]) ? (v[region] as unknown[]) : [];
@@ -215,4 +353,7 @@ function idList(value: unknown): GridIdentifier[] {
   return Array.isArray(value)
     ? (value.filter((x) => typeof x === "string") as GridIdentifier[])
     : [];
+}
+function collapseList(value: unknown): GridIdentifier[] {
+  return idList(value).filter(isCollapsible);
 }

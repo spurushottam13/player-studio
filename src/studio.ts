@@ -1,63 +1,25 @@
-// Studio controller: owns the three independent editors (grid / region / free),
-// tracks the active mode, and fans out a single onChange signal that fires on
-// either an active-state edit or a mode switch. Layouts are independent per mode.
+// Studio controller: owns the Region editor (the chosen Regional Layout model)
+// and fans out a single onChange signal that fires on every layout edit. The
+// earlier POC compared three models (grid / region / free); region was selected,
+// so it is now the only authoring canvas.
 
-import { createFreeEditor } from "./modes/free/editor";
-import { createGridEditor } from "./modes/grid/editor";
 import { createRegionEditor } from "./modes/region/editor";
-import type { EditorInstance, ModeId } from "./modes/types";
-
-const MODE_KEY = "player-studio:mode";
-const MODE_DOC: Record<ModeId, string> = { grid: "old_spec.md", region: "spec.md", free: "free_spec.md" };
-
-function loadMode(valid: ModeId[]): ModeId {
-  try {
-    const m = localStorage.getItem(MODE_KEY) as ModeId | null;
-    if (m && valid.includes(m)) return m;
-  } catch {
-    /* ignore */
-  }
-  return "free";
-}
+import type { EditorInstance } from "./modes/types";
 
 export class Studio {
-  readonly editors: EditorInstance[];
-  private byId: Record<ModeId, EditorInstance>;
-  private modeId: ModeId;
+  readonly editor: EditorInstance;
   private listeners = new Set<() => void>();
-  private unsubActive: (() => void) | null = null;
 
   constructor() {
-    // Order matches the spec progression: grid → region → free.
-    const grid = createGridEditor();
-    const region = createRegionEditor();
-    const free = createFreeEditor();
-    this.editors = [grid, region, free];
-    this.byId = { grid, region, free };
-    this.modeId = loadMode(this.editors.map((e) => e.id));
-    this.wireActive();
+    this.editor = createRegionEditor();
+    this.editor.subscribe(() => this.emit());
   }
 
-  get mode(): ModeId {
-    return this.modeId;
-  }
   active(): EditorInstance {
-    return this.byId[this.modeId];
+    return this.editor;
   }
   activeDoc(): string {
-    return MODE_DOC[this.modeId];
-  }
-
-  setMode(id: ModeId): void {
-    if (id === this.modeId) return;
-    this.modeId = id;
-    try {
-      localStorage.setItem(MODE_KEY, id);
-    } catch {
-      /* ignore */
-    }
-    this.wireActive();
-    this.emit();
+    return "spec.md";
   }
 
   onChange(fn: () => void): () => void {
@@ -65,10 +27,6 @@ export class Studio {
     return () => this.listeners.delete(fn);
   }
 
-  private wireActive(): void {
-    this.unsubActive?.();
-    this.unsubActive = this.active().subscribe(() => this.emit());
-  }
   private emit(): void {
     for (const fn of this.listeners) fn();
   }

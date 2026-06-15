@@ -1,6 +1,5 @@
-// Right panel: the live player.json for the ACTIVE mode. The spec format follows
-// the editor mode (Grid → old_spec.md, Region → spec.md, Free → free_spec.md), so
-// switching the canvas switches the generated spec.
+// Right panel: the live player.json for the Regional Layout canvas, regenerated
+// on every edit. The format is the region spec (spec.md).
 
 import type { Studio } from "../studio";
 import { el } from "./dom";

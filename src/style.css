@@ -227,6 +227,24 @@ body {
   outline: 2px dashed var(--danger);
   outline-offset: -6px;
 }
+.chip--managed {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.chip--managed:hover {
+  border-color: var(--border);
+}
+.chip--managed::after {
+  content: "auto";
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.panel-title--sub {
+  margin-top: 18px;
+}
 .drag-image-holder {
   position: absolute;
   top: -9999px;
@@ -525,6 +543,94 @@ body.dnd-active .row-gap {
   border-style: solid;
   color: #fff;
   background: var(--accent-soft);
+}
+
+/* ---------- Region sub-toolbars: viewport switcher + collapse bin ---------- */
+.subbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 2px;
+  flex-wrap: wrap;
+}
+.subbar-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.subbar-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+.subbar--collapse {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 6px;
+}
+.collapse-bin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+.collapse-bin.collapse--over {
+  border-color: var(--accent);
+  border-style: solid;
+  background: var(--accent-soft);
+}
+.collapse-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+.collapsed-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: grab;
+}
+.collapsed-chip:active {
+  cursor: grabbing;
+}
+.collapsed-chip.is-dragging {
+  opacity: 0.4;
+}
+.collapsed-chip svg {
+  pointer-events: none;
+}
+.collapsed-chip-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 15px;
+  height: 15px;
+  line-height: 13px;
+  text-align: center;
+  border-radius: 50%;
+  border: none;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.collapsed-chip:hover .collapsed-chip-remove {
+  opacity: 1;
 }
 .drop-caret {
   width: 2px;

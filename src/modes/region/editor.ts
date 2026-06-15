@@ -10,8 +10,8 @@ import { appendControlBody, appendRemoveButton } from "../../ui/controlbody";
 import { el } from "../../ui/dom";
 import { createToolbar } from "../../ui/toolbar";
 import type { EditorInstance } from "../types";
-import { LANES, REGION_NAMES, RegionState } from "./state";
-import type { Lane, RegionName, Row } from "./state";
+import { isCollapsible, LANES, REGION_NAMES, RegionState, VIEWPORTS } from "./state";
+import type { Lane, RegionName, Row, Viewport } from "./state";
 import { buildRegionSpec } from "./spec";
 
 const REGION_LABEL: Record<RegionName, string> = { top: "Top bar", center: "Center", bottom: "Bottom bar" };
@@ -33,6 +33,28 @@ export function createRegionEditor(): EditorInstance {
     el("div", { class: "player-bottom" }, [el("div", { class: "player-scrim" }), bottomEl]),
   );
 
+  // ---- Viewport switcher: each viewport holds its own layout + collapse set.
+  // Switching it swaps the active design AND resizes the preview to that width,
+  // so a narrow viewport shows the responsive bar the user is authoring for.
+  const VIEWPORT_LABEL: Record<Viewport, string> = { default: "Default", "490": "≤490", "300": "≤300", "200": "≤200" };
+  const VIEWPORT_PX: Record<Viewport, number> = { default: 640, "490": 490, "300": 300, "200": 200 };
+  const vpButtons = new Map<Viewport, HTMLElement>();
+  const vpSeg = el("div", { class: "seg" });
+  for (const vp of VIEWPORTS) {
+    const btn = el("button", { class: "seg-btn", text: VIEWPORT_LABEL[vp] });
+    btn.addEventListener("click", () => state.setViewport(vp));
+    vpButtons.set(vp, btn);
+    vpSeg.append(btn);
+  }
+  const viewportBar = el("div", { class: "subbar" }, [
+    el("span", { class: "subbar-label", text: "Viewport" }),
+    vpSeg,
+    el("span", { class: "subbar-hint", text: "Each viewport keeps its own layout + collapse set." }),
+  ]);
+
+  // The "Collapse in Setting" bin lives in the LEFT palette (see ui/palette.ts);
+  // this editor only exposes the collapse capability on its EditorInstance below.
+
   panel.append(
     createToolbar({
       theme: state.getTheme(),
@@ -41,6 +63,7 @@ export function createRegionEditor(): EditorInstance {
       onReset: () => state.resetToDefault(),
       onClear: () => state.clear(),
     }),
+    viewportBar,
     el("div", { class: "stage" }, [player]),
   );
 
@@ -108,6 +131,11 @@ export function createRegionEditor(): EditorInstance {
     const t = state.getTheme();
     player.style.setProperty("--primary", t.primary);
     player.style.setProperty("--secondary", t.secondary);
+    const vp = state.getViewport();
+    const w = VIEWPORT_PX[vp];
+    player.style.width = `${w}px`;
+    player.style.height = `${Math.round((w * 9) / 16)}px`;
+    for (const [v, btn] of vpButtons) btn.classList.toggle("seg-btn--active", v === vp);
     for (const region of REGION_NAMES) renderRegion(region);
   };
 
@@ -190,5 +218,13 @@ export function createRegionEditor(): EditorInstance {
     generateSpec: () => JSON.stringify(buildRegionSpec(state), null, 2),
     has: (id) => state.has(id),
     remove: (id) => state.remove(id),
+    // Collapse-in-Setting capability — rendered by the left palette.
+    collapsible: true,
+    managesSetting: true,
+    canCollapse: (id) => isCollapsible(id) && !state.isCollapsed(id),
+    getCollapsed: () => state.getCollapsed(),
+    collapse: (id) => state.collapse(id),
+    uncollapse: (id) => state.uncollapse(id),
+    isCollapsed: (id) => state.isCollapsed(id),
   };
 }

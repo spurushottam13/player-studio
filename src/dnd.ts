@@ -11,6 +11,12 @@ export interface RemoveTarget {
   remove(id: GridIdentifier): void;
 }
 
+// Minimal surface a "Collapse in Setting" drop zone needs.
+export interface CollapseTarget {
+  canCollapse(id: GridIdentifier): boolean;
+  collapse(id: GridIdentifier): void;
+}
+
 const MIME = "application/x-player-control";
 
 let draggingId: GridIdentifier | null = null;
@@ -68,6 +74,27 @@ export function makeRemoveTarget(el: HTMLElement, state: RemoveTarget): void {
     if (id && state.has(id)) {
       e.preventDefault();
       state.remove(id);
+    }
+  });
+}
+
+// Wire a drop zone (the "Collapse in Setting" bin) that folds a control into the
+// Setting menu. Accepts drags from both the canvas and the palette.
+export function makeCollapseTarget(el: HTMLElement, target: CollapseTarget): void {
+  el.addEventListener("dragover", (e) => {
+    if (!draggingId || !target.canCollapse(draggingId)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    el.classList.add("collapse--over");
+  });
+  el.addEventListener("dragleave", () => el.classList.remove("collapse--over"));
+  el.addEventListener("drop", (e) => {
+    el.classList.remove("collapse--over");
+    const id = (e.dataTransfer?.getData(MIME) || draggingId) as GridIdentifier | null;
+    draggingId = null;
+    if (id && target.canCollapse(id)) {
+      e.preventDefault();
+      target.collapse(id);
     }
   });
 }
