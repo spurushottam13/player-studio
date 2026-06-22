@@ -3,25 +3,25 @@
 // control id from this module since dataTransfer payloads aren't readable during
 // `dragover`.
 
-import type { GridIdentifier } from "./controls";
+import type { ControlId } from "./controls";
 
 // Minimal surface a remove target needs — any active editor satisfies this.
 export interface RemoveTarget {
-  has(id: GridIdentifier): boolean;
-  remove(id: GridIdentifier): void;
+  has(id: ControlId): boolean;
+  remove(id: ControlId): void;
 }
 
 // Minimal surface a "Collapse in Setting" drop zone needs.
 export interface CollapseTarget {
-  canCollapse(id: GridIdentifier): boolean;
-  collapse(id: GridIdentifier): void;
+  canCollapse(id: ControlId): boolean;
+  collapse(id: ControlId): void;
 }
 
 const MIME = "application/x-player-control";
 
-let draggingId: GridIdentifier | null = null;
+let draggingId: ControlId | null = null;
 
-export function getDraggingId(): GridIdentifier | null {
+export function getDraggingId(): ControlId | null {
   return draggingId;
 }
 
@@ -37,7 +37,7 @@ export function endDrag(): void {
 // control icon instead of the whole palette chip with its text label).
 export function makeDraggable(
   el: HTMLElement,
-  id: GridIdentifier,
+  id: ControlId,
   dragImage?: HTMLElement,
 ): void {
   el.setAttribute("draggable", "true");
@@ -68,7 +68,7 @@ export function makeRemoveTarget(el: HTMLElement, state: RemoveTarget): void {
   el.addEventListener("dragleave", () => el.classList.remove("remove--over"));
   el.addEventListener("drop", (e) => {
     el.classList.remove("remove--over");
-    const id = (e.dataTransfer?.getData(MIME) || draggingId) as GridIdentifier | null;
+    const id = (e.dataTransfer?.getData(MIME) || draggingId) as ControlId | null;
     draggingId = null;
     // Only remove if the control is currently placed (ignore fresh palette drags).
     if (id && state.has(id)) {
@@ -90,7 +90,7 @@ export function makeCollapseTarget(el: HTMLElement, target: CollapseTarget): voi
   el.addEventListener("dragleave", () => el.classList.remove("collapse--over"));
   el.addEventListener("drop", (e) => {
     el.classList.remove("collapse--over");
-    const id = (e.dataTransfer?.getData(MIME) || draggingId) as GridIdentifier | null;
+    const id = (e.dataTransfer?.getData(MIME) || draggingId) as ControlId | null;
     draggingId = null;
     if (id && target.canCollapse(id)) {
       e.preventDefault();

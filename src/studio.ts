@@ -5,6 +5,7 @@
 
 import { createRegionEditor } from "./modes/region/editor";
 import type { EditorInstance } from "./modes/types";
+import { registry } from "./registry";
 
 export class Studio {
   readonly editor: EditorInstance;
@@ -13,6 +14,9 @@ export class Studio {
   constructor() {
     this.editor = createRegionEditor();
     this.editor.subscribe(() => this.emit());
+    // Custom-control / icon-override edits also fan out as layout changes so the
+    // palette, canvas, and code panel all refresh.
+    registry.subscribe(() => this.emit());
   }
 
   active(): EditorInstance {

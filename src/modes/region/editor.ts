@@ -3,8 +3,8 @@
 // (start / center / end). Controls drop into lanes; gaps between rows are drop
 // targets that create new rows.
 
-import { CONTROL_BY_ID, isFill } from "../../controls";
-import type { GridIdentifier } from "../../controls";
+import type { ControlId } from "../../controls";
+import { isFill, registry } from "../../registry";
 import { endDrag, getDraggingId, makeDraggable } from "../../dnd";
 import { appendControlBody, appendRemoveButton } from "../../ui/controlbody";
 import { el } from "../../ui/dom";
@@ -76,8 +76,8 @@ export function createRegionEditor(): EditorInstance {
     caret.remove();
   };
 
-  const renderControl = (id: GridIdentifier): HTMLElement => {
-    const def = CONTROL_BY_ID.get(id);
+  const renderControl = (id: ControlId): HTMLElement => {
+    const def = registry.get(id);
     const ctrl = el("div", { class: `placed-control ${id}`, title: def?.label ?? id });
     makeDraggable(ctrl, id);
     if (def) appendControlBody(ctrl, def);
@@ -208,6 +208,9 @@ export function createRegionEditor(): EditorInstance {
   });
 
   state.subscribe(render);
+  // Re-render when icons change too (an override / custom-icon edit must update a
+  // control that's already on the canvas, not just the palette).
+  registry.subscribe(render);
   render();
 
   return {
@@ -218,6 +221,7 @@ export function createRegionEditor(): EditorInstance {
     generateSpec: () => JSON.stringify(buildRegionSpec(state), null, 2),
     has: (id) => state.has(id),
     remove: (id) => state.remove(id),
+    purge: (id) => state.purge(id),
     // Collapse-in-Setting capability — rendered by the left palette.
     collapsible: true,
     managesSetting: true,

@@ -1,14 +1,29 @@
-// Left panel: the 21 draggable control chips, plus (for modes that support it)
-// a "Collapse in Setting" bin below them. Also acts as a remove target — drag a
-// placed control back here to take it off the player. "Placed" state, removal,
-// and the collapse bin all proxy to whichever editor is currently active.
+// Left panel: the draggable control chips (built-ins + user-added custom controls),
+// plus a "Collapse in Setting" bin below them. Also acts as a remove target — drag
+// a placed control back here to take it off the player. Each chip exposes inline
+// actions: change its icon (any chip), reset an override (overridden built-ins),
+// and delete (custom controls). "Add custom control" creates a new chip from any
+// Lucide icon. Placed-state, removal, and the collapse bin proxy to the active editor.
 
-import { createElement } from "lucide";
-import { CONTROLS, CONTROL_BY_ID } from "../controls";
-import type { GridIdentifier } from "../controls";
+import type { ControlId } from "../controls";
+import { renderIcon } from "../icons";
+import { registry } from "../registry";
 import { endDrag, makeCollapseTarget, makeDraggable, makeRemoveTarget } from "../dnd";
 import type { Studio } from "../studio";
 import { el } from "./dom";
+import { pickIcon } from "./iconpicker";
+
+// A small chip action button that never starts a chip drag.
+function actionBtn(cls: string, title: string, text: string, onClick: () => void): HTMLElement {
+  const b = el("button", { class: `chip-act ${cls}`, title, text });
+  b.setAttribute("draggable", "false");
+  b.addEventListener("pointerdown", (e) => e.stopPropagation());
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return b;
+}
 
 export function createPalette(studio: Studio): HTMLElement {
   const panel = el("aside", { class: "palette-panel" });
@@ -20,23 +35,19 @@ export function createPalette(studio: Studio): HTMLElement {
     }),
   );
 
+  // "+ Add custom control" — pick any Lucide icon + a name → a new draggable chip.
+  const addBtn = el("button", { class: "btn add-control-btn", text: "+ Add custom control" });
+  addBtn.addEventListener("click", async () => {
+    const icon = await pickIcon({ title: "Pick an icon for your control" });
+    if (!icon) return;
+    const label = window.prompt("Name your control")?.trim();
+    if (!label) return;
+    registry.addCustom({ label, icon });
+  });
+  panel.append(addBtn);
+
   const list = el("div", { class: "chip-list" });
-  const chips = new Map<GridIdentifier, HTMLElement>();
   const dragImages = el("div", { class: "drag-image-holder" });
-
-  for (const def of CONTROLS) {
-    const icon = createElement(def.icon, { width: "18", height: "18" });
-    const chip = el("div", { class: "chip", title: def.label }, [icon, el("span", { class: "chip-label", text: def.label })]);
-    chip.dataset.id = def.id;
-
-    const dragImage = el("div", { class: "chip-drag-image" }, [createElement(def.icon, { width: "24", height: "24" })]);
-    dragImages.append(dragImage);
-
-    makeDraggable(chip, def.id, dragImage);
-    chips.set(def.id, chip);
-    list.append(chip);
-  }
-
   panel.append(list, dragImages);
 
   // Remove target + placed-state both proxy to the active editor.
@@ -46,8 +57,6 @@ export function createPalette(studio: Studio): HTMLElement {
   });
 
   // ---- Collapse-in-Setting bin (only for modes that expose the capability) ----
-  // Drop an icon here to fold it into the Setting menu; the Setting icon on the
-  // bar is then auto-shown while at least one control is collapsed.
   let collapseItems: HTMLElement | null = null;
   if (studio.active().collapsible) {
     collapseItems = el("div", { class: "collapse-items" });
@@ -73,6 +82,59 @@ export function createPalette(studio: Studio): HTMLElement {
     }
   }
 
+  // Rebuild every chip from the registry. Called on each change so custom controls
+  // appear/disappear and icon swaps show live. Chips only mutate on commit (drop,
+  // registry edit), never mid-drag, so rebuilding here is safe.
+  const renderChips = () => {
+    const active = studio.active();
+    list.replaceChildren();
+    dragImages.replaceChildren();
+
+    for (const def of registry.list()) {
+      const id: ControlId = def.id;
+      const chip = el("div", { class: "chip", title: def.label }, [
+        renderIcon(registry.iconOf(id), 18),
+        el("span", { class: "chip-label", text: def.label }),
+      ]);
+      chip.dataset.id = id;
+
+      const actions = el("div", { class: "chip-actions" });
+      actions.append(
+        actionBtn("chip-act--icon", "Change icon", "✎", async () => {
+          const next = await pickIcon({ title: `Change icon — ${def.label}`, current: registry.iconOf(id) });
+          if (next) registry.setIcon(id, next);
+        }),
+      );
+      if (registry.isOverridden(id)) {
+        actions.append(actionBtn("chip-act--reset", "Reset to default icon", "↺", () => registry.resetIcon(id)));
+      }
+      if (registry.isCustom(id)) {
+        actions.append(
+          actionBtn("chip-act--del", "Delete control", "×", () => {
+            studio.active().purge?.(id); // strip from every viewport first
+            registry.removeCustom(id);
+          }),
+        );
+      }
+      chip.append(actions);
+
+      chip.classList.toggle("chip--placed", active.has(id));
+
+      const dragImage = el("div", { class: "chip-drag-image" }, [renderIcon(registry.iconOf(id), 24)]);
+      dragImages.append(dragImage);
+      makeDraggable(chip, id, dragImage);
+
+      // Setting is auto-managed (driven by the collapse list) → not draggable.
+      if (id === "Setting" && active.managesSetting) {
+        chip.classList.add("chip--managed");
+        chip.setAttribute("draggable", "false");
+        chip.title = "Setting — auto-shown when controls are collapsed";
+      }
+
+      list.append(chip);
+    }
+  };
+
   const renderCollapsed = () => {
     if (!collapseItems) return;
     const active = studio.active();
@@ -83,10 +145,10 @@ export function createPalette(studio: Studio): HTMLElement {
       return;
     }
     for (const id of ids) {
-      const def = CONTROL_BY_ID.get(id);
+      const def = registry.get(id);
       const chip = el("div", { class: `collapsed-chip ${id}`, title: def?.label ?? id });
       makeDraggable(chip, id); // drag back onto the bar to re-place it
-      if (def) chip.append(createElement(def.icon, { width: "16", height: "16" }));
+      chip.append(renderIcon(registry.iconOf(id), 16));
       const off = el("button", { class: "collapsed-chip-remove", title: "Remove from Setting", text: "×" });
       off.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -98,16 +160,7 @@ export function createPalette(studio: Studio): HTMLElement {
   };
 
   const sync = () => {
-    const active = studio.active();
-    for (const [id, chip] of chips) {
-      chip.classList.toggle("chip--placed", active.has(id));
-      // Setting is auto-managed (driven by the collapse list) → not draggable.
-      if (id === "Setting" && active.managesSetting) {
-        chip.classList.add("chip--managed");
-        chip.setAttribute("draggable", "false");
-        chip.title = "Setting — auto-shown when controls are collapsed";
-      }
-    }
+    renderChips();
     renderCollapsed();
   };
   studio.onChange(sync);

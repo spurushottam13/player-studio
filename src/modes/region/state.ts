@@ -6,8 +6,8 @@
 // pruned. The Setting icon's presence in a viewport is fully derived from that
 // viewport's collapse list (see reconcileSetting). See spec.md.
 
-import type { GridIdentifier } from "../../controls";
-import { CONTROL_BY_ID } from "../../controls";
+import type { ControlId } from "../../controls";
+import { registry } from "../../registry";
 import { DEFAULT_THEME } from "../types";
 import type { Theme } from "../types";
 
@@ -19,16 +19,16 @@ export const LANES: readonly Lane[] = ["start", "center", "end"];
 export const VIEWPORTS: readonly Viewport[] = ["default", "490", "300", "200"];
 
 export interface Row {
-  start: GridIdentifier[];
-  center: GridIdentifier[];
-  end: GridIdentifier[];
+  start: ControlId[];
+  center: ControlId[];
+  end: ControlId[];
 }
 export type Regions = Record<RegionName, Row[]>;
 
 // One viewport's design: the placed regions plus the icons collapsed into Setting.
 export interface ViewportLayout {
   regions: Regions;
-  collapse: GridIdentifier[];
+  collapse: ControlId[];
 }
 type Layouts = Record<Viewport, ViewportLayout>;
 
@@ -44,8 +44,9 @@ const STORAGE_KEY = "player-studio:region-layout";
 
 // A control may be collapsed into Setting only if it is an icon and is not the
 // Setting control itself (Setting is the collapse container, not collapsible).
-export function isCollapsible(id: GridIdentifier): boolean {
-  return id !== "Setting" && CONTROL_BY_ID.get(id)?.kind === "icon";
+// Resolves kind via the registry so custom icon controls qualify too.
+export function isCollapsible(id: ControlId): boolean {
+  return id !== "Setting" && registry.kindOf(id) === "icon";
 }
 
 function emptyRow(partial: Partial<Row> = {}): Row {
@@ -122,13 +123,13 @@ export class RegionState {
   rowsOf(vp: Viewport, region: RegionName): Row[] {
     return this.layouts[vp].regions[region];
   }
-  collapsedOf(vp: Viewport): GridIdentifier[] {
+  collapsedOf(vp: Viewport): ControlId[] {
     return [...this.layouts[vp].collapse];
   }
   getTheme(): Theme {
     return { ...this.theme };
   }
-  find(id: GridIdentifier): ItemPath | null {
+  find(id: ControlId): ItemPath | null {
     const regions = this.activeRegions();
     for (const region of REGION_NAMES) {
       const rows = regions[region];
@@ -142,11 +143,11 @@ export class RegionState {
     return null;
   }
   // Placed anywhere in this viewport: on the bar OR collapsed into Setting.
-  has(id: GridIdentifier): boolean {
+  has(id: ControlId): boolean {
     return this.find(id) !== null || this.isCollapsed(id);
   }
 
-  place(id: GridIdentifier, target: ItemPath): void {
+  place(id: ControlId, target: ItemPath): void {
     this.dropFromCollapse(id);
     let insertIndex = target.index;
     const cur = this.find(id);
@@ -170,7 +171,7 @@ export class RegionState {
   }
 
   placeInNewRow(
-    id: GridIdentifier,
+    id: ControlId,
     region: RegionName,
     atRow: number,
     lane: Lane = "start",
@@ -186,7 +187,7 @@ export class RegionState {
     this.changed();
   }
 
-  remove(id: GridIdentifier): void {
+  remove(id: ControlId): void {
     const collapsed = this.dropFromCollapse(id);
     const cur = this.find(id);
     if (!cur && !collapsed) return;
@@ -195,15 +196,43 @@ export class RegionState {
     this.changed();
   }
 
+  // Strip a control from EVERY viewport (regions + collapse lists), not just the
+  // active one. Used when a custom control's definition is deleted so no viewport
+  // is left referencing a control that no longer exists.
+  purge(id: ControlId): void {
+    let touched = false;
+    for (const vp of VIEWPORTS) {
+      const layout = this.layouts[vp];
+      for (const region of REGION_NAMES) {
+        for (const row of layout.regions[region]) {
+          for (const lane of LANES) {
+            const i = row[lane].indexOf(id);
+            if (i !== -1) {
+              row[lane].splice(i, 1);
+              touched = true;
+            }
+          }
+        }
+      }
+      const ci = layout.collapse.indexOf(id);
+      if (ci !== -1) {
+        layout.collapse.splice(ci, 1);
+        touched = true;
+      }
+      pruneRegions(layout.regions);
+    }
+    if (touched) this.changed();
+  }
+
   // ---- collapse-in-Setting API -------------------------------------------
-  getCollapsed(): GridIdentifier[] {
+  getCollapsed(): ControlId[] {
     return [...this.active().collapse];
   }
-  isCollapsed(id: GridIdentifier): boolean {
+  isCollapsed(id: ControlId): boolean {
     return this.active().collapse.includes(id);
   }
   // Move a control off the bar and into the Setting menu (active viewport).
-  collapse(id: GridIdentifier): void {
+  collapse(id: ControlId): void {
     if (!isCollapsible(id) || this.isCollapsed(id)) return;
     const cur = this.find(id);
     if (cur) this.activeRegions()[cur.region][cur.row][cur.lane].splice(cur.index, 1);
@@ -212,11 +241,11 @@ export class RegionState {
     this.changed();
   }
   // Take a control back out of the Setting menu (does not re-place it on the bar).
-  uncollapse(id: GridIdentifier): void {
+  uncollapse(id: ControlId): void {
     if (this.dropFromCollapse(id)) this.changed();
   }
   // Remove id from the active collapse list; returns whether it was there.
-  private dropFromCollapse(id: GridIdentifier): boolean {
+  private dropFromCollapse(id: ControlId): boolean {
     const list = this.active().collapse;
     const i = list.indexOf(id);
     if (i === -1) return false;
@@ -239,12 +268,7 @@ export class RegionState {
   }
 
   private pruneEmptyRows(): void {
-    const regions = this.activeRegions();
-    for (const region of REGION_NAMES) {
-      regions[region] = regions[region].filter(
-        (r) => r.start.length || r.center.length || r.end.length,
-      );
-    }
+    pruneRegions(this.activeRegions());
   }
 
   // Setting is mandatory iff this viewport has collapsed icons. Auto-place it in
@@ -349,11 +373,23 @@ function sanitizeRegions(value: unknown): Regions {
   }
   return out;
 }
-function idList(value: unknown): GridIdentifier[] {
+// Keep only strings that resolve to a known control (built-in or a still-existing
+// custom). This drops "ghost" ids — e.g. a custom control deleted from the registry
+// while its id lingered in saved layout JSON — so no unrenderable chip survives.
+function idList(value: unknown): ControlId[] {
   return Array.isArray(value)
-    ? (value.filter((x) => typeof x === "string") as GridIdentifier[])
+    ? (value.filter((x) => typeof x === "string" && registry.get(x) !== undefined) as ControlId[])
     : [];
 }
-function collapseList(value: unknown): GridIdentifier[] {
+function collapseList(value: unknown): ControlId[] {
   return idList(value).filter(isCollapsible);
+}
+
+// Drop rows whose three lanes are all empty (shared by prune + purge).
+function pruneRegions(regions: Regions): void {
+  for (const region of REGION_NAMES) {
+    regions[region] = regions[region].filter(
+      (r) => r.start.length || r.center.length || r.end.length,
+    );
+  }
 }

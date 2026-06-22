@@ -197,6 +197,49 @@ flag needed).
 
 ---
 
+## 6b. Custom controls & icon overrides (`controls` block)
+
+The 21 ids above are the **reserved** contract — a stock renderer already knows
+their glyph and behavior. Two authoring features need the schema to carry *extra*
+information, both via an optional top-level **`controls`** object keyed by id
+(`schemaVersion` ≥ `2.1`):
+
+1. **Custom controls** — a user adds their own control (a new chip) whose glyph is
+   **any Lucide icon**. Its id is `CUSTOM_<slug>` (the `CUSTOM_` prefix guarantees
+   no collision with the reserved ids). Because no platform has a default for it, it
+   is **fully declared**: `custom`, `kind`, `label`, and `icon`.
+2. **Icon overrides** — a user swaps the glyph of a built-in (e.g. give `FullScreen`
+   a different icon). The id stays a reserved built-in (behavior unchanged); only the
+   new glyph rides along.
+
+```jsonc
+{
+  "schemaVersion": "2.1",
+  // …theme / viewports…
+  "controls": {
+    "CUSTOM_like": {                 // custom control — full declaration
+      "custom": true,
+      "kind":   "icon",
+      "label":  "Like",
+      "icon":   "Heart"              // a Lucide icon NAME (never raw SVG)
+    },
+    "FullScreen": { "icon": "Maximize2" }   // overridden built-in — glyph only
+  }
+}
+```
+
+- **`icon` is always a Lucide icon name** (a string), never raw SVG. Each platform
+  maps the name to its own glyph set (Lucide on web; the agreed Lucide-equivalent SF
+  Symbol / Material asset on native).
+- Only **used** controls (placed on a bar or collapsed into Setting) are emitted;
+  the block is omitted entirely when empty, so default layouts are unchanged.
+- **Renderer lookup for any item id:** if it appears in `controls` with an `icon`,
+  draw that glyph by name. Otherwise it's a stock built-in → native glyph + native
+  behavior, as today. Items declared `"custom": true` have **no** native behavior
+  (see [§8](#8-out-of-scope)).
+
+---
+
 ## 7. Cross-platform rendering map
 
 Every primitive in this model is idiomatic on every target — no custom layout
@@ -222,9 +265,12 @@ behave identically if a team is not on SwiftUI/Compose.
 This spec defines **layout and style**, not:
 
 - **Behavior** — seeking, play/pause, quality switching, etc. Implemented per
-  platform, bound to the control `id`.
-- **Iconography assets** — the spec names *which* control; teams must agree on
-  the actual glyphs for pixel parity.
+  platform, bound to the control `id`. **Custom controls** (§6b) carry their *glyph*
+  but have **no built-in behavior** — the host app binds their `CUSTOM_*` id, or
+  they are purely decorative until it does.
+- **Iconography assets** — the spec names *which* control and, for custom/overridden
+  controls, the Lucide icon *name*; teams must ship the matching glyphs for pixel
+  parity.
 - **Player chrome** — video surface, buffering spinner, gesture zones.
 
 ---

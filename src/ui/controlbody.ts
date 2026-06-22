@@ -1,9 +1,11 @@
 // Shared rendering of a placed control's inner content (icon / text / slider) and
 // its remove button. Used by all three mode canvases so a control looks identical
-// regardless of how it is positioned.
+// regardless of how it is positioned. The icon branch resolves through the registry
+// so custom controls and icon overrides render live.
 
-import { createElement } from "lucide";
-import type { ControlDef, GridIdentifier } from "../controls";
+import type { ControlDef, ControlId } from "../controls";
+import { renderIcon } from "../icons";
+import { registry } from "../registry";
 import { el } from "./dom";
 
 export function appendControlBody(ctrl: HTMLElement, def: ControlDef): void {
@@ -19,11 +21,11 @@ export function appendControlBody(ctrl: HTMLElement, def: ControlDef): void {
     ctrl.classList.add("placed-control--text");
     ctrl.append(el("span", { class: "control-text", text: def.text ?? "00:00" }));
   } else {
-    ctrl.append(createElement(def.icon, { width: "20", height: "20" }));
+    ctrl.append(renderIcon(registry.iconOf(def.id), 20));
   }
 }
 
-export function appendRemoveButton(ctrl: HTMLElement, onRemove: (id: GridIdentifier) => void, id: GridIdentifier): void {
+export function appendRemoveButton(ctrl: HTMLElement, onRemove: (id: ControlId) => void, id: ControlId): void {
   const btn = el("button", { class: "control-remove", title: "Remove", text: "×" });
   btn.addEventListener("pointerdown", (e) => e.stopPropagation());
   btn.addEventListener("click", (e) => {
