@@ -64,7 +64,19 @@ function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
     if (!custom && !registry.isOverridden(id)) continue;
     const def = registry.get(id);
     out[id] = custom
-      ? { custom: true, kind: def?.kind ?? "icon", label: def?.label ?? id, icon: registry.iconOf(id) }
+      ? {
+          custom: true,
+          kind: def?.kind ?? "icon",
+          label: def?.label ?? id,
+          icon: registry.iconOf(id),
+          // Text controls carry their flavour + extras so the SDK knows what to render:
+          // TimeAll's separator, Dynamic Text's cdt_ variable, and Current Chapter's
+          // showNumber flag all ride along.
+          ...(def?.textType ? { textType: def.textType } : {}),
+          ...(def?.separator !== undefined ? { separator: def.separator } : {}),
+          ...(def?.variable !== undefined ? { variable: def.variable } : {}),
+          ...(def?.showNumber !== undefined ? { showNumber: def.showNumber } : {}),
+        }
       : { icon: registry.iconOf(id) };
   }
   return out;

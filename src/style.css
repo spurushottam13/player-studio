@@ -835,3 +835,130 @@ body.dnd-active .row-gap {
   font-size: 12px;
   color: var(--muted);
 }
+
+/* ---------- Add-text picker ---------- */
+.text-picker {
+  width: min(460px, 100%);
+}
+.text-type-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+}
+.text-type-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.text-type-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.text-type-icon {
+  display: inline-flex;
+  color: var(--accent);
+}
+.text-type-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.text-type-preview {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.text-input-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.text-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 2px;
+}
+.text-preview-tag {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.text-preview-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.text-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.btn--primary:hover {
+  color: #fff;
+  filter: brightness(1.05);
+}
+/* Toggle switch (Current Chapter's "show number") */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.switch-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch-track {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  transition: background 0.15s, border-color 0.15s;
+}
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s, background 0.15s;
+}
+.switch-input:checked + .switch-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.switch-input:checked + .switch-track .switch-thumb {
+  transform: translateX(16px);
+  background: #fff;
+}
+.switch-input:focus-visible + .switch-track {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.switch-text {
+  font-size: 13px;
+}

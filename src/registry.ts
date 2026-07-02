@@ -4,8 +4,8 @@
 // — palette, canvas, and the player.json generator — resolves controls through the
 // single `registry` singleton so custom controls and icon swaps render live.
 
-import { BUILTIN_BY_ID, BUILTINS } from "./controls";
-import type { ControlDef, ControlId, ControlKind } from "./controls";
+import { BUILTIN_BY_ID, BUILTINS, DEFAULT_SEPARATOR, isTextType, TEXT_TYPE_BY_TYPE, textOf } from "./controls";
+import type { ControlDef, ControlId, ControlKind, TextType } from "./controls";
 import { isKnownIcon } from "./icons";
 import type { IconName } from "./icons";
 
@@ -53,7 +53,7 @@ export class ControlRegistry {
   // ---- writes (each persists + notifies) ---------------------------------
   addCustom(input: { label: string; icon: IconName; kind?: ControlKind }): ControlId {
     const label = input.label.trim();
-    const id = this.uniqueId(label);
+    const id = this.uniqueId(`CUSTOM_${slugify(label) || "control"}`);
     this.custom.set(id, {
       id,
       label: label || id,
@@ -62,6 +62,40 @@ export class ControlRegistry {
       custom: true,
       defaultSpan: 1,
       maxSpan: 1,
+    });
+    this.changed();
+    return id;
+  }
+  // Add a TEXT control (the "+ Add text" flow). Time readouts, chapter, title and
+  // dynamic text all render as kind === "text"; the flavour and its extras live in
+  // `textType` / `separator` / `variable`. Dynamic Text is keyed by its cdt_ variable
+  // (also the SDK handle); the rest get a CUSTOM_ id like any other custom control.
+  addText(input: { textType: TextType; separator?: string; variable?: string; showNumber?: boolean }): ControlId {
+    const meta = TEXT_TYPE_BY_TYPE.get(input.textType);
+    if (!meta) return "";
+    const isDynamic = input.textType === "dynamicText";
+    const isTimeAll = input.textType === "timeAll";
+    const isChapter = input.textType === "currentChapter";
+    const separator = isTimeAll ? input.separator ?? DEFAULT_SEPARATOR : undefined;
+    const showNumber = isChapter ? input.showNumber ?? false : undefined;
+
+    const id = this.uniqueId(
+      isDynamic ? normalizeVariable(input.variable) : `CUSTOM_${slugify(meta.label)}`,
+    );
+    const variable = isDynamic ? id : undefined;
+    this.custom.set(id, {
+      id,
+      label: isDynamic ? id : meta.label,
+      icon: meta.icon,
+      kind: "text",
+      custom: true,
+      textType: input.textType,
+      text: textOf(input.textType, { separator, variable, showNumber }),
+      ...(separator !== undefined ? { separator } : {}),
+      ...(variable !== undefined ? { variable } : {}),
+      ...(showNumber !== undefined ? { showNumber } : {}),
+      defaultSpan: isTimeAll ? 3 : 2,
+      maxSpan: isTimeAll ? 6 : 4,
     });
     this.changed();
     return id;
@@ -97,11 +131,8 @@ export class ControlRegistry {
     return () => this.listeners.delete(fn);
   }
 
-  // Slug the label, prefix CUSTOM_, and uniquify against built-ins + customs.
-  private uniqueId(label: string): ControlId {
-    const slug =
-      label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "control";
-    const base = `CUSTOM_${slug}`;
+  // Uniquify a base id against built-ins + customs (callers own the prefix/slug).
+  private uniqueId(base: string): ControlId {
     let id = base;
     let n = 2;
     while (this.custom.has(id) || BUILTIN_BY_ID.has(id)) id = `${base}_${n++}`;
@@ -136,6 +167,11 @@ export class ControlRegistry {
           icon: def.icon,
           kind: def.kind === "text" || def.kind === "slider" ? def.kind : "icon",
           custom: true,
+          ...(typeof def.text === "string" ? { text: def.text } : {}),
+          ...(isTextType(def.textType) ? { textType: def.textType } : {}),
+          ...(typeof def.separator === "string" ? { separator: def.separator } : {}),
+          ...(typeof def.variable === "string" ? { variable: def.variable } : {}),
+          ...(typeof def.showNumber === "boolean" ? { showNumber: def.showNumber } : {}),
           defaultSpan: typeof def.defaultSpan === "number" ? def.defaultSpan : 1,
           maxSpan: typeof def.maxSpan === "number" ? def.maxSpan : 1,
         });
@@ -151,6 +187,21 @@ export class ControlRegistry {
       /* ignore */
     }
   }
+}
+
+// Lowercase slug for CUSTOM_ ids: non-alphanumerics collapse to underscores.
+function slugify(label: string): string {
+  return label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+// The SDK handle for a Dynamic Text control: a cdt_-prefixed identifier. Keeps the
+// user's casing (SDK var names are case-sensitive), strips non-identifier chars, and
+// only prefixes cdt_ when it isn't already there. Exported so the picker can preview
+// the exact string that will be stored (idempotent: addText normalizes again).
+export function normalizeVariable(raw?: string): string {
+  const cleaned = (raw ?? "").trim().replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+  const base = cleaned || "text";
+  return /^cdt_/i.test(base) ? base : `cdt_${base}`;
 }
 
 // App-wide singleton. Constructed (and loaded from localStorage) at import time,

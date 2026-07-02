@@ -44,6 +44,18 @@ export type ControlId = BuiltinId | (string & {});
 // slider — a horizontal range that fills available width (progress / volume)
 export type ControlKind = "icon" | "text" | "slider";
 
+// The flavours of user-addable TEXT control (the "+ Add text" flow). The four
+// time readouts always show 00:00 (timeAll joins two with a separator); the rest
+// carry their own preview. All render as kind === "text".
+export type TextType =
+  | "timeLeft"
+  | "timeConsumed"
+  | "timeDuration"
+  | "timeAll"
+  | "currentChapter"
+  | "dynamicText"
+  | "title";
+
 export interface ControlDef {
   id: ControlId; // the cross-platform contract id (or a CUSTOM_* id)
   label: string;
@@ -51,6 +63,11 @@ export interface ControlDef {
   kind: ControlKind;
   custom?: boolean; // true for user-added controls
   text?: string; // display string for kind === "text"
+  // Text-control extras (set by the "+ Add text" flow; see registry.addText):
+  textType?: TextType; // which text flavour a custom text control is
+  separator?: string; // TimeAll only — glue between the two readouts (default " / ")
+  variable?: string; // Dynamic Text only — the cdt_ variable name passed to the SDK
+  showNumber?: boolean; // Current Chapter only — append the "02/14" number status
   // Grid mode only: cells consumed on first drop, and the horizontal resize cap
   // (Number.POSITIVE_INFINITY = to the grid edge). Ignored by region/free modes.
   defaultSpan: number;
@@ -87,3 +104,59 @@ export const BUILTINS: readonly ControlDef[] = [
 export const BUILTIN_BY_ID: ReadonlyMap<ControlId, ControlDef> = new Map(
   BUILTINS.map((c) => [c.id, c]),
 );
+
+// ---- Text controls ("+ Add text") ---------------------------------------
+// Static description of each text flavour: its default label, the palette-chip
+// glyph, and the sample string shown in the picker. `input` names the extra field
+// the picker collects before the control can be added (none for most).
+export interface TextTypeMeta {
+  type: TextType;
+  label: string;
+  icon: IconName;
+  preview: string; // sample text shown in the picker (and canvas for fixed types)
+  input?: "separator" | "variable" | "switch"; // extra user input this flavour needs
+}
+
+export const DEFAULT_SEPARATOR = " / ";
+// Current Chapter renders the chapter title (dynamic at runtime); the studio stands
+// in with this placeholder, optionally trailed by the "02/14" number status.
+export const CHAPTER_TEXT = "Chapter Name";
+export const CHAPTER_NUMBER = "02/14";
+
+export const TEXT_TYPES: readonly TextTypeMeta[] = [
+  { type: "timeLeft", label: "Time Left", icon: "ClockArrowDown", preview: "00:00" },
+  { type: "timeConsumed", label: "Time Consumed", icon: "Clock", preview: "00:00" },
+  { type: "timeDuration", label: "Time Duration", icon: "Clock3", preview: "00:00" },
+  { type: "timeAll", label: "Time All", icon: "Clock", preview: "00:00 / 00:00", input: "separator" },
+  { type: "currentChapter", label: "Current Chapter", icon: "ListVideo", preview: CHAPTER_TEXT, input: "switch" },
+  { type: "dynamicText", label: "Dynamic Text", icon: "Braces", preview: "cdt_text", input: "variable" },
+  { type: "title", label: "Title", icon: "Type", preview: "Video Title" },
+] as const;
+
+export const TEXT_TYPE_BY_TYPE: ReadonlyMap<TextType, TextTypeMeta> = new Map(
+  TEXT_TYPES.map((t) => [t.type, t]),
+);
+
+export function isTextType(v: unknown): v is TextType {
+  return typeof v === "string" && TEXT_TYPE_BY_TYPE.has(v as TextType);
+}
+
+// The string a text control shows on the canvas. Time readouts are always 00:00
+// (TimeAll joins two with its separator); Current Chapter is the chapter title, with
+// the "02/14" number status appended only when showNumber is on; Dynamic Text stands
+// in with its cdt_ variable name until the SDK fills it.
+export function textOf(
+  type: TextType,
+  opts: { separator?: string; variable?: string; showNumber?: boolean } = {},
+): string {
+  switch (type) {
+    case "timeAll":
+      return `00:00${opts.separator ?? DEFAULT_SEPARATOR}00:00`;
+    case "currentChapter":
+      return opts.showNumber ? `${CHAPTER_TEXT} ${CHAPTER_NUMBER}` : CHAPTER_TEXT;
+    case "dynamicText":
+      return opts.variable || "cdt_text";
+    default:
+      return TEXT_TYPE_BY_TYPE.get(type)?.preview ?? "00:00";
+  }
+}

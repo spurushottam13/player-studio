@@ -12,6 +12,7 @@ import { endDrag, makeCollapseTarget, makeDraggable, makeRemoveTarget } from "..
 import type { Studio } from "../studio";
 import { el } from "./dom";
 import { pickIcon } from "./iconpicker";
+import { pickText } from "./textpicker";
 
 // A small chip action button that never starts a chip drag.
 function actionBtn(cls: string, title: string, text: string, onClick: () => void): HTMLElement {
@@ -45,6 +46,17 @@ export function createPalette(studio: Studio): HTMLElement {
     registry.addCustom({ label, icon });
   });
   panel.append(addBtn);
+
+  // "+ Add text" — pick a text flavour (time readouts, current chapter, dynamic
+  // text, title) → a new draggable text chip. Time controls always read 00:00;
+  // Time All takes a separator and Dynamic Text takes a cdt_ variable name.
+  const addTextBtn = el("button", { class: "btn add-control-btn", text: "+ Add text" });
+  addTextBtn.addEventListener("click", async () => {
+    const desc = await pickText();
+    if (!desc) return;
+    registry.addText(desc);
+  });
+  panel.append(addTextBtn);
 
   const list = el("div", { class: "chip-list" });
   const dragImages = el("div", { class: "drag-image-holder" });
