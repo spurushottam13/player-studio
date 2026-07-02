@@ -5,13 +5,16 @@ API and renders the control bar from it. This is the consumer side of the
 contract defined in [`spec.md`](./spec.md). The authoring side (dashboard) is in
 [`DASHBOARD_IMPLEMENTATION.md`](./DASHBOARD_IMPLEMENTATION.md).
 
-> **Scope:** layout + style only. *Behavior* (what `PlayNPause` does) is wired
+> **Scope:** layout + style only. _Behavior_ (what `PlayNPause` does) is wired
 > natively per platform, keyed by the control's `gridIdentifier`. The JSON never
 > carries behavior — see [§7](#7-controls-grididentifier).
 
-> **Schema:** this document describes **`schemaVersion` 2.0**, which wraps the
-> layout in per-**viewport** entries and adds **collapse-in-Setting**. The flat
-> 1.0 shape (single `regions` block, no viewports) is superseded.
+> **Schema:** this document describes **`schemaVersion` 2.1**, which wraps the
+> layout in per-**viewport** entries, adds **collapse-in-Setting**, and adds an
+> optional top-level **`controls`** block carrying **custom controls** and
+> **icon overrides** (see [§7b](#7b-custom-controls--icon-overrides-the-controls-block)).
+> The flat 1.0 shape (single `regions` block, no viewports) is superseded; 2.0
+> layouts (no `controls` block) render unchanged under 2.1.
 
 ---
 
@@ -29,11 +32,18 @@ key:
   "title": "...",
   // ...existing fields...
   "playerLayout": {
-    "schemaVersion": "2.0",
+    "schemaVersion": "2.1",
     "layoutModel": "region",
-    "theme":     { /* shared across viewports */ },
-    "viewports": { /* default | 490 | 300 | 200 */ }
-  }
+    "theme": {
+      /* shared across viewports */
+    },
+    "controls": {
+      /* OPTIONAL: custom controls + icon overrides — see §7b */
+    },
+    "viewports": {
+      /* default | 490 | 300 | 200 */
+    },
+  },
 }
 ```
 
@@ -41,8 +51,8 @@ Player init flow:
 
 ```
 fetch metadata ──► read playerLayout ──► pick viewport (by width) ──► build bar ──► attach behavior
-                                                                                          │
-                                                                               (bind by gridIdentifier)
+                              │                                          │              │
+                  (read `controls` decls)              (resolve icon via `controls`)  (bind by gridIdentifier)
 ```
 
 The server is the source of truth and always sends a correct, current-version
@@ -57,21 +67,60 @@ default layout. Otherwise render the layout as received.
 
 ```jsonc
 {
-  "schemaVersion": "2.0",
-  "layoutModel": "region",          // always "region"
-  "theme": {                        // ONE theme, shared by every viewport
-    "primary":   "#1e90ff",         // progress fill / active accents
-    "secondary": "#ffffff",         // icon + text color
-    "iconSize":  22,                // density-independent (px / dp / pt)
+  "schemaVersion": "2.1",
+  "layoutModel": "region", // always "region"
+  "theme": {
+    // ONE theme, shared by every viewport
+    "primary": "#1e90ff", // progress fill / active accents
+    "secondary": "#ffffff", // icon + text color
+    "iconSize": 22, // density-independent (px / dp / pt)
     "barHeight": 40,
-    "gap":       8                  // spacing between items inside a group
+    "gap": 8, // spacing between items inside a group
+  },
+  "controls": {
+    // OPTIONAL — declarations for custom controls
+    "CUSTOM_like": {
+      "custom": true,
+      "kind": "icon",
+      "label": "Like",
+      "icon": "Heart",
+    },
+    "FullScreen": { "icon": "Maximize2" }, // and icon overrides — see §7b
   },
   "viewports": {
-    "default": { "regions": { /* ... */ }, "collapseInSetting": [ /* ids */ ] },
-    "490":     { "regions": { /* ... */ }, "collapseInSetting": [ /* ids */ ] },
-    "300":     { "regions": { /* ... */ }, "collapseInSetting": [ /* ids */ ] },
-    "200":     { "regions": { /* ... */ }, "collapseInSetting": [ /* ids */ ] }
-  }
+    "default": {
+      "regions": {
+        /* ... */
+      },
+      "collapseInSetting": [
+        /* ids */
+      ],
+    },
+    "490": {
+      "regions": {
+        /* ... */
+      },
+      "collapseInSetting": [
+        /* ids */
+      ],
+    },
+    "300": {
+      "regions": {
+        /* ... */
+      },
+      "collapseInSetting": [
+        /* ids */
+      ],
+    },
+    "200": {
+      "regions": {
+        /* ... */
+      },
+      "collapseInSetting": [
+        /* ids */
+      ],
+    },
+  },
 }
 ```
 
@@ -80,11 +129,17 @@ Each **viewport** is a self-contained design:
 ```jsonc
 {
   "regions": {
-    "top":    [ /* Row[] */ ],      // top bar      (PiP, Cast, Settings…)
-    "center": [ /* Row[] */ ],      // center overlay (big Play, Back/Fwd…)
-    "bottom": [ /* Row[] */ ]       // control bar  (progress, transport, time…)
+    "top": [
+      /* Row[] */
+    ], // top bar      (PiP, Cast, Settings…)
+    "center": [
+      /* Row[] */
+    ], // center overlay (big Play, Back/Fwd…)
+    "bottom": [
+      /* Row[] */
+    ], // control bar  (progress, transport, time…)
   },
-  "collapseInSetting": [ "Quality", "Speed" ]   // icons folded into the Setting menu
+  "collapseInSetting": ["Quality", "Speed"], // icons folded into the Setting menu
 }
 ```
 
@@ -96,6 +151,8 @@ viewports → regions → rows (stacked) → groups (horizontal) → items (grid
 ```
 
 - **`theme`** is global (one set of tokens for all viewports).
+- **`controls`** (optional, global) declares **custom controls** and **icon
+  overrides** used anywhere in the document — see [§7b](#7b-custom-controls--icon-overrides-the-controls-block).
 - Each **viewport** has its own `regions` **and** its own `collapseInSetting` list.
 - A **region** is an ordered array of **rows**, stacked top→bottom.
 - A **row** is one or more **groups** laid out horizontally.
@@ -106,8 +163,8 @@ viewports → regions → rows (stacked) → groups (horizontal) → items (grid
 
 ## 3. Viewports — choosing which layout to render
 
-The four viewport keys are **max-width breakpoints** in CSS px of the *rendered
-player*, not the device screen:
+The four viewport keys are **max-width breakpoints** in CSS px of the _rendered
+player_, not the device screen:
 
 | key       | applies when player width is… |
 | --------- | ----------------------------- |
@@ -136,7 +193,8 @@ function resolveViewport(viewports: Viewports, width: number): ViewportLayout {
   return viewports.default;
 }
 
-const hasAnyRow = (r: Regions) => r.top.length || r.center.length || r.bottom.length;
+const hasAnyRow = (r: Regions) =>
+  r.top.length || r.center.length || r.bottom.length;
 ```
 
 > **Why fall through?** The dashboard may author only some viewports (e.g. a
@@ -148,13 +206,14 @@ const hasAnyRow = (r: Regions) => r.top.length || r.center.length || r.bottom.le
 ## 4. Collapse in Setting
 
 Each viewport's **`collapseInSetting`** is an ordered list of **icon** controls
-that live *inside the Setting menu* instead of on the bar — a responsive way to
+that live _inside the Setting menu_ instead of on the bar — a responsive way to
 shed buttons on narrow players.
 
 Contract:
 
 - Only **icon**-kind controls appear here (never sliders/text, never `Setting`
-  itself).
+  itself). This includes **custom** icon controls — resolve their glyph from the
+  `controls` block, same as on the bar ([§7b](#7b-custom-controls--icon-overrides-the-controls-block)).
 - **The `Setting` control is auto-managed by the authoring tool:** when
   `collapseInSetting` is **non-empty**, `Setting` is guaranteed to be present in
   that viewport's `regions`; when it is **empty**, `Setting` is **absent**. The
@@ -171,11 +230,16 @@ Contract:
 - If `collapseInSetting` is empty there is no `Setting` icon and no menu.
 
 ```ts
-function renderSettingMenu(ids: GridIdentifier[], host: SettingMenu, player: Player) {
-  if (ids.length === 0) return;                 // no Setting icon exists either
+function renderSettingMenu(
+  ids: ControlId[],
+  controls: Controls,
+  host: SettingMenu,
+  player: Player,
+) {
+  if (ids.length === 0) return; // no Setting icon exists either
   for (const id of ids) {
-    const entry = REGISTRY[id];                 // icon kind
-    host.append(menuItem(entry, () => entry.onActivate?.(player)));
+    const c = resolveControl(id, controls); // glyph via override / custom decl (§7b)
+    host.append(menuItem(c, () => c.onActivate?.(player)));
   }
 }
 ```
@@ -200,8 +264,8 @@ exactly one group).
 {
   "groups": [
     { "align": "start", "items": ["Backward", "PlayNPause", "Forward"] },
-    { "align": "end",   "items": ["Speed", "Quality", "FullScreen"] }
-  ]
+    { "align": "end", "items": ["Speed", "Quality", "FullScreen"] },
+  ],
 }
 ```
 
@@ -209,7 +273,10 @@ Normalize both to `Group[]` before rendering:
 
 ```ts
 type Align = "start" | "center" | "end" | "fill";
-interface Group { align: Align; items: GridIdentifier[]; }
+interface Group {
+  align: Align;
+  items: ControlId[];
+} // ids: built-in or CUSTOM_*
 type Row = Group | { groups: Group[] };
 
 function rowGroups(row: Row): Group[] {
@@ -221,12 +288,12 @@ function rowGroups(row: Row): Group[] {
 
 ## 6. Alignment semantics (`align`)
 
-| `align`  | Meaning                                              | Web (flexbox)                 | Android (Compose)           | iOS (SwiftUI)                  |
-| -------- | ---------------------------------------------------- | ----------------------------- | --------------------------- | ------------------------------ |
-| `start`  | Packed to the leading (left) edge                    | default order                 | leading children            | leading                        |
-| `center` | Centered within the row                              | `margin: auto`                | `Arrangement.Center`        | `Spacer()` both sides          |
-| `end`    | Packed to the trailing (right) edge                  | `margin-left: auto`           | `Spacer()` before           | `Spacer()` before              |
-| `fill`   | Expands to absorb all remaining horizontal space     | `flex: 1`                     | `Modifier.weight(1f)`       | `.frame(maxWidth: .infinity)`  |
+| `align`  | Meaning                                          | Web (flexbox)       | Android (Compose)     | iOS (SwiftUI)                 |
+| -------- | ------------------------------------------------ | ------------------- | --------------------- | ----------------------------- |
+| `start`  | Packed to the leading (left) edge                | default order       | leading children      | leading                       |
+| `center` | Centered within the row                          | `margin: auto`      | `Arrangement.Center`  | `Spacer()` both sides         |
+| `end`    | Packed to the trailing (right) edge              | `margin-left: auto` | `Spacer()` before     | `Spacer()` before             |
+| `fill`   | Expands to absorb all remaining horizontal space | `flex: 1`           | `Modifier.weight(1f)` | `.frame(maxWidth: .infinity)` |
 
 - A row with `start` + `end` groups reads as **space-between**.
 - A `fill` group (typically `VideoProgress`) absorbs the slack so you never need
@@ -236,57 +303,59 @@ function rowGroups(row: Row): Group[] {
 Every primitive maps to a first-class layout type on each platform — no custom
 layout engine required:
 
-| Concept      | Web                       | Android        | iOS      |
-| ------------ | ------------------------- | -------------- | -------- |
-| region stack | `flex-direction: column`  | `Column`       | `VStack` |
-| row          | `display: flex`           | `Row`          | `HStack` |
+| Concept      | Web                      | Android  | iOS      |
+| ------------ | ------------------------ | -------- | -------- |
+| region stack | `flex-direction: column` | `Column` | `VStack` |
+| row          | `display: flex`          | `Row`    | `HStack` |
 
 ---
 
 ## 7. Controls (`gridIdentifier`)
 
-Each item in a group is a **`gridIdentifier`** — the stable, cross-platform key
-the player binds rendering *and behavior* to. The authoring tool, web, Android,
-and iOS all share this exact string set. A control absent from the JSON is simply
-not rendered (no explicit "hidden" flag).
+Each item in a group is a control **id** — the stable, cross-platform key the
+player binds rendering _and behavior_ to. Usually it's one of the **21 reserved
+`gridIdentifier`s** below (shared by the authoring tool, web, Android, and iOS); it
+may also be a **`CUSTOM_*`** id declared in the `controls` block
+([§7b](#7b-custom-controls--icon-overrides-the-controls-block)). A control absent
+from the JSON is simply not rendered (no explicit "hidden" flag).
 
 ### The 21-control catalog (the contract)
 
-| #  | gridIdentifier     | kind   | render hint        |
-| -- | ------------------ | ------ | ------------------ |
-| 1  | `AirPlay`          | icon   |                    |
-| 2  | `Backward`         | icon   |                    |
-| 3  | `CaptionSearch`    | icon   |                    |
-| 4  | `Captions`         | icon   |                    |
-| 5  | `Cast`             | icon   |                    |
-| 6  | `Chapters`         | icon   |                    |
-| 7  | `Forward`          | icon   |                    |
-| 8  | `FullScreen`       | icon   |                    |
-| 9  | `Notification`     | icon   |                    |
-| 10 | `PictureInPicture` | icon   |                    |
-| 11 | `PlayNPause`       | icon   |                    |
-| 12 | `Quality`          | icon   |                    |
-| 13 | `SaveVideoOffline` | icon   |                    |
-| 14 | `Setting`          | icon   | menu container — auto-managed (see [§4](#4-collapse-in-setting)) |
-| 15 | `Speed`            | icon   |                    |
-| 16 | `TimeConsumed`     | text   | `HH:MM`            |
-| 17 | `TimeLeft`         | text   | `HH:MM`            |
-| 18 | `TimeDuration`     | text   | `HH:MM`            |
-| 19 | `TimeAll`          | text   | `HH:MM / HH:MM`    |
-| 20 | `VideoProgress`    | slider | typically `fill`   |
-| 21 | `Volume`           | slider | `fill`-capable     |
+| #   | gridIdentifier     | kind   | render hint                                                      |
+| --- | ------------------ | ------ | ---------------------------------------------------------------- |
+| 1   | `AirPlay`          | icon   |                                                                  |
+| 2   | `Backward`         | icon   |                                                                  |
+| 3   | `CaptionSearch`    | icon   |                                                                  |
+| 4   | `Captions`         | icon   |                                                                  |
+| 5   | `Cast`             | icon   |                                                                  |
+| 6   | `Chapters`         | icon   |                                                                  |
+| 7   | `Forward`          | icon   |                                                                  |
+| 8   | `FullScreen`       | icon   |                                                                  |
+| 9   | `Notification`     | icon   |                                                                  |
+| 10  | `PictureInPicture` | icon   |                                                                  |
+| 11  | `PlayNPause`       | icon   |                                                                  |
+| 12  | `Quality`          | icon   |                                                                  |
+| 13  | `SaveVideoOffline` | icon   |                                                                  |
+| 14  | `Setting`          | icon   | menu container — auto-managed (see [§4](#4-collapse-in-setting)) |
+| 15  | `Speed`            | icon   |                                                                  |
+| 16  | `TimeConsumed`     | text   | `HH:MM`                                                          |
+| 17  | `TimeLeft`         | text   | `HH:MM`                                                          |
+| 18  | `TimeDuration`     | text   | `HH:MM`                                                          |
+| 19  | `TimeAll`          | text   | `HH:MM / HH:MM`                                                  |
+| 20  | `VideoProgress`    | slider | typically `fill`                                                 |
+| 21  | `Volume`           | slider | `fill`-capable                                                   |
 
-> The **kind** is *not* in the JSON — it is a property of the id, known to the
+> The **kind** is _not_ in the JSON — it is a property of the id, known to the
 > player from this static catalog. The JSON only ships ids; the player looks up
 > kind, icon, and behavior locally.
 
 ### kind → how to render
 
-| kind     | Web              | Android (Compose)      | iOS (SwiftUI)       |
-| -------- | ---------------- | ---------------------- | ------------------- |
-| `icon`   | `<svg>` button   | `Icon` in `IconButton` | `Image` in `Button` |
-| `text`   | `<span>`         | `Text`                 | `Text`              |
-| `slider` | `<input range>`  | `Slider`               | `Slider`            |
+| kind     | Web             | Android (Compose)      | iOS (SwiftUI)       |
+| -------- | --------------- | ---------------------- | ------------------- |
+| `icon`   | `<svg>` button  | `Icon` in `IconButton` | `Image` in `Button` |
+| `text`   | `<span>`        | `Text`                 | `Text`              |
+| `slider` | `<input range>` | `Slider`               | `Slider`            |
 
 ### Recommended player-side registry
 
@@ -304,7 +373,7 @@ interface ControlEntry {
   onActivate?: (player: Player) => void;    // behavior — bound here, not in JSON
 }
 
-const REGISTRY: Record<GridIdentifier, ControlEntry> = {
+const REGISTRY: Record<ControlId, ControlEntry> = {   // 21 built-ins; host may add CUSTOM_* ids
   PlayNPause: { kind: "icon", icon: PlayIcon, onActivate: (p) => p.toggle() },
   Forward:    { kind: "icon", icon: FwdIcon,  onActivate: (p) => p.seek(+10) },
   Setting:    { kind: "icon", icon: GearIcon, onActivate: (p) => p.toggleSettingMenu() },
@@ -314,8 +383,92 @@ const REGISTRY: Record<GridIdentifier, ControlEntry> = {
 };
 ```
 
-> Iconography is **not** shipped in the JSON. Native teams must provide matching
-> glyphs (same SVGs, or agreed SF Symbols / Material equivalents) for parity.
+> Iconography for the **21 built-ins** is **not** shipped in the JSON — native
+> teams provide matching glyphs (same SVGs, or agreed SF Symbols / Material
+> equivalents) for parity. **Custom controls and icon overrides** _do_ ship a
+> Lucide icon **name** (a string, never raw SVG) in the `controls` block; map that
+> name to your platform's glyph set ([§7b](#7b-custom-controls--icon-overrides-the-controls-block)).
+
+---
+
+## 7b. Custom controls & icon overrides (the `controls` block)
+
+`schemaVersion` 2.1 adds an **optional** top-level `controls` object, keyed by id,
+carrying the _extra_ information a stock player can't infer for two authoring
+features. Untouched built-ins never appear here; the block is **omitted entirely
+when empty** (so a layout with no customs/overrides is a 2.0 document plus the
+version bump). Only **used** controls (placed on a bar or in `collapseInSetting`)
+are declared.
+
+```jsonc
+"controls": {
+  "CUSTOM_like": {            // 1) CUSTOM CONTROL — full declaration
+    "custom": true,
+    "kind":   "icon",         // currently always "icon"
+    "label":  "Like",
+    "icon":   "Heart"         // a Lucide icon NAME (never raw SVG)
+  },
+  "FullScreen": { "icon": "Maximize2" }   // 2) ICON OVERRIDE — new glyph only
+}
+```
+
+**1. Custom controls.** A user-defined control whose id is `CUSTOM_<slug>` (the
+`CUSTOM_` prefix guarantees no collision with the 21 reserved ids). The player has
+no local catalog entry for it, so it is **fully declared**: `kind` (currently
+always `icon`), `label`, and `icon`. It sits in `items` / `collapseInSetting`
+exactly like a built-in id.
+
+> **No built-in behavior.** A custom control carries layout + glyph only. The
+> player renders it, but activation does nothing unless the **host app** registers
+> a handler for its `CUSTOM_*` id. Treat an unhandled custom control as decorative.
+>
+> ```ts
+> // Host opt-in: give a custom control behavior by registering its id.
+> REGISTRY["CUSTOM_like"] = {
+>   kind: "icon",
+>   onActivate: (p) => like(p.videoId),
+> };
+> ```
+
+**2. Icon overrides.** A reserved built-in whose glyph the user swapped. The id
+stays a built-in — `kind` and behavior are still resolved from the local catalog —
+and only the replacement `icon` (a Lucide name) rides along.
+
+### Resolution rules (what the player must do)
+
+For any item id seen while rendering (in `items` **or** `collapseInSetting`), with
+`controls = layout.controls ?? {}`:
+
+```ts
+function resolveControl(id: ControlId, controls: Controls): RenderEntry {
+  const decl = controls[id];
+
+  // kind: declared for customs; from the local catalog for built-ins.
+  const kind = decl?.custom ? (decl.kind ?? "icon") : REGISTRY[id].kind;
+
+  // icon: a declared `icon` (override or custom) WINS over the catalog default.
+  const iconName = decl?.icon ?? CATALOG_ICON[id]; // a Lucide name
+  const icon = resolveLucide(iconName) ?? PLACEHOLDER_ICON; // map name → glyph asset
+
+  // behavior: only built-ins (and host-registered customs) have one.
+  return {
+    kind,
+    icon,
+    onActivate: REGISTRY[id]?.onActivate,
+    textFormat: REGISTRY[id]?.textFormat,
+  };
+}
+```
+
+- **`icon` is always a Lucide name string**, never raw SVG. Map it to your
+  platform's glyph set (Lucide on web; the agreed Lucide-equivalent SF Symbol /
+  Material asset on native). If the name is unknown to your build, draw a
+  **placeholder glyph** rather than failing.
+- A declared `icon` **overrides** the local catalog glyph for that id — this is how
+  the override feature reaches the player; the id, `kind`, and behavior are
+  otherwise unchanged.
+- Render every control — bar and Setting menu — through `resolveControl`, so custom
+  glyphs and overrides apply uniformly.
 
 ---
 
@@ -323,17 +476,18 @@ const REGISTRY: Record<GridIdentifier, ControlEntry> = {
 
 ```ts
 function renderPlayer(layout: PlayerLayout, root: HTMLElement, player: Player) {
-  applyTheme(root, layout.theme);                              // shared tokens
+  applyTheme(root, layout.theme); // shared tokens
 
+  const controls = layout.controls ?? {}; // §7b — custom + overrides
   const render = () => {
     const vp = resolveViewport(layout.viewports, player.width); // §3 — re-run on resize
     root.replaceChildren();
-    renderRegions(vp.regions, root, player);                    // bar
-    renderSettingMenu(vp.collapseInSetting, settingHost, player); // §4 — Setting menu
+    renderRegions(vp.regions, controls, root, player); // bar
+    renderSettingMenu(vp.collapseInSetting, controls, settingHost, player); // §4 — Setting menu
   };
 
   render();
-  player.onResize(render);                                     // re-pick viewport on width change
+  player.onResize(render); // re-pick viewport on width change
 }
 
 function applyTheme(root: HTMLElement, t: Theme) {
@@ -344,16 +498,20 @@ function applyTheme(root: HTMLElement, t: Theme) {
   root.style.setProperty("--icon-size", `${t.iconSize}px`);
 }
 
-function renderRegions(regions: Regions, root: HTMLElement, player: Player) {
+function renderRegions(
+  regions: Regions,
+  controls: Controls,
+  root: HTMLElement,
+  player: Player,
+) {
   for (const region of ["top", "center", "bottom"] as const) {
-    const regionEl = makeRegion(region);                       // flex column
+    const regionEl = makeRegion(region); // flex column
     for (const row of regions[region] ?? []) {
-      const rowEl = makeRow();                                 // flex row, gap
+      const rowEl = makeRow(); // flex row, gap
       for (const group of rowGroups(row)) {
-        const groupEl = makeGroup(group.align);                // start|center|end|fill
+        const groupEl = makeGroup(group.align); // start|center|end|fill
         for (const id of group.items) {
-          const entry = REGISTRY[id];                          // id is always known (server-validated)
-          groupEl.append(renderControl(id, entry, player));
+          groupEl.append(renderControl(id, controls, player)); // id known: catalog or `controls`
         }
         rowEl.append(groupEl);
       }
@@ -363,11 +521,15 @@ function renderRegions(regions: Regions, root: HTMLElement, player: Player) {
   }
 }
 
-function renderControl(id: GridIdentifier, entry: ControlEntry, player: Player) {
-  switch (entry.kind) {
-    case "icon":   return iconButton(entry.icon!, () => entry.onActivate?.(player));
-    case "text":   return textReadout(id, entry.textFormat!);   // subscribe to player time
-    case "slider": return slider(id, player);                   // progress / volume
+function renderControl(id: ControlId, controls: Controls, player: Player) {
+  const c = resolveControl(id, controls); // §7b — glyph/kind/behavior
+  switch (c.kind) {
+    case "icon":
+      return iconButton(c.icon, () => c.onActivate?.(player)); // custom: no-op unless host-bound
+    case "text":
+      return textReadout(id, c.textFormat!); // subscribe to player time
+    case "slider":
+      return slider(id, player); // progress / volume
   }
 }
 ```
@@ -391,7 +553,10 @@ and re-resolve the viewport on size-class / configuration changes.
       {
         "groups": [
           { "align": "start", "items": ["TimeAll"] },
-          { "align": "end",   "items": ["Speed", "Quality", "Setting", "FullScreen"] }
+          {
+            "align": "end",
+            "items": ["Speed", "Quality", "Setting", "FullScreen"]
+          }
         ]
       }
     ]
@@ -415,7 +580,7 @@ At `≤300`, `Speed` + `Quality` are collapsed into the Setting menu. Note
       {
         "groups": [
           { "align": "start", "items": ["PlayNPause"] },
-          { "align": "end",   "items": ["Setting", "FullScreen"] }
+          { "align": "end", "items": ["Setting", "FullScreen"] }
         ]
       }
     ]
@@ -428,20 +593,25 @@ At `≤300`, `Speed` + `Quality` are collapsed into the Setting menu. Note
 
 Exactly what the studio's region mode emits for its default — `default` carries
 the canonical bar, narrow viewports are left blank (player falls through to
-`default`, per [§3](#3-viewports--choosing-which-layout-to-render)). Use as the
-golden fixture for parser tests:
+`default`, per [§3](#3-viewports--choosing-which-layout-to-render)). No custom
+controls or overrides, so the `controls` block is omitted. Use as the golden
+fixture for parser tests:
 
 ```json
 {
-  "schemaVersion": "2.0",
+  "schemaVersion": "2.1",
   "layoutModel": "region",
-  "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8 },
+  "theme": {
+    "primary": "#1e90ff",
+    "secondary": "#ffffff",
+    "iconSize": 22,
+    "barHeight": 40,
+    "gap": 8
+  },
   "viewports": {
     "default": {
       "regions": {
-        "top": [
-          { "align": "end", "items": ["PictureInPicture"] }
-        ],
+        "top": [{ "align": "end", "items": ["PictureInPicture"] }],
         "center": [],
         "bottom": [
           { "align": "start", "items": ["VideoProgress"] },
@@ -449,16 +619,89 @@ golden fixture for parser tests:
           {
             "groups": [
               { "align": "start", "items": ["TimeAll"] },
-              { "align": "end",   "items": ["Speed", "Quality", "Setting", "FullScreen"] }
+              {
+                "align": "end",
+                "items": ["Speed", "Quality", "Setting", "FullScreen"]
+              }
             ]
           }
         ]
       },
       "collapseInSetting": []
     },
-    "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
-    "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
-    "200": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] }
+    "490": {
+      "regions": { "top": [], "center": [], "bottom": [] },
+      "collapseInSetting": []
+    },
+    "300": {
+      "regions": { "top": [], "center": [], "bottom": [] },
+      "collapseInSetting": []
+    },
+    "200": {
+      "regions": { "top": [], "center": [], "bottom": [] },
+      "collapseInSetting": []
+    }
+  }
+}
+```
+
+### 9d. With a custom control + an icon override
+
+A `CUSTOM_like` button (Lucide `Heart`) placed on the bar, and `FullScreen`'s glyph
+overridden to `Maximize2`. Both ids appear in `items`; both are declared in the
+top-level `controls` block. The player renders `CUSTOM_like` with the `Heart`
+glyph (no behavior unless the host binds the id), and `FullScreen` with `Maximize2`
+while keeping its native fullscreen behavior:
+
+```json
+{
+  "schemaVersion": "2.1",
+  "layoutModel": "region",
+  "theme": {
+    "primary": "#1e90ff",
+    "secondary": "#ffffff",
+    "iconSize": 22,
+    "barHeight": 40,
+    "gap": 8
+  },
+  "controls": {
+    "CUSTOM_like": {
+      "custom": true,
+      "kind": "icon",
+      "label": "Like",
+      "icon": "Heart"
+    },
+    "FullScreen": { "icon": "Maximize2" }
+  },
+  "viewports": {
+    "default": {
+      "regions": {
+        "top": [],
+        "center": [],
+        "bottom": [
+          { "align": "fill", "items": ["VideoProgress"] },
+          {
+            "groups": [
+              { "align": "start", "items": ["PlayNPause"] },
+              { "align": "end", "items": ["CUSTOM_like", "FullScreen"] }
+            ]
+          }
+        ]
+      },
+      "collapseInSetting": []
+    },
+    "490": {
+      "regions": { "top": [], "center": [], "bottom": [] },
+      "collapseInSetting": []
+    },
+    "300": {
+      "regions": { "top": [], "center": [], "bottom": [] },
+      "collapseInSetting": []
+    },
+    "200": {
+      "regions": { "top": [], "center": [], "bottom": [] },
+      "collapseInSetting": []
+    }
   }
 }
 ```
@@ -471,18 +714,23 @@ The server guarantees a valid, current-version `region` layout, so the player
 does **not** validate the schema or gate on `schemaVersion` / `layoutModel`. The
 cases it still handles:
 
-| Situation                                   | Player behavior                                  |
-| ------------------------------------------- | ------------------------------------------------ |
-| `playerLayout` missing from metadata        | use built-in default layout                      |
-| Selected viewport has no rows               | fall through to the next wider; `default` is base|
-| Empty/omitted region                        | render nothing for it (valid)                    |
-| `collapseInSetting` empty                   | no Setting menu (and `Setting` is absent from bar)|
+| Situation                                  | Player behavior                                               |
+| ------------------------------------------ | ------------------------------------------------------------- |
+| `playerLayout` missing from metadata       | use built-in default layout                                   |
+| Selected viewport has no rows              | fall through to the next wider; `default` is base             |
+| Empty/omitted region                       | render nothing for it (valid)                                 |
+| `collapseInSetting` empty                  | no Setting menu (and `Setting` is absent from bar)            |
+| `controls` block absent (a 2.0 document)   | render every id from the local catalog (no customs/overrides) |
+| Declared `icon` name unknown to this build | draw a placeholder glyph (don't fail)                         |
+| `CUSTOM_*` control with no host handler    | render its glyph; activation is a no-op (decorative)          |
 
 Because correctness is enforced upstream (dashboard validates against the shared
 `player.schema.json` before save — see [`spec.md` §9](./spec.md)), the player can
-trust `items`/`collapseInSetting` contain known `gridIdentifier`s, rows are
-well-formed, and ids are unique within a viewport. No defensive skipping is
-required on the render path.
+trust that every id in `items`/`collapseInSetting` is either a known
+`gridIdentifier` **or** a `CUSTOM_*` id declared in `controls`, that declared icon
+names are well-formed, rows are well-formed, and ids are unique within a viewport.
+No defensive skipping is required on the render path beyond the placeholder-glyph
+fallback above.
 
 ---
 
@@ -494,7 +742,13 @@ required on the render path.
 - [ ] Normalize both row forms (shorthand + `groups`) to `Group[]`.
 - [ ] Implement the four `align` modes per platform.
 - [ ] Build the `gridIdentifier → {kind, icon, behavior}` registry (all 21).
+- [ ] Parse the optional `controls` block; resolve every item's glyph/kind through it (§7b).
+- [ ] Let a declared `icon` (override or custom) replace the catalog glyph; map the Lucide name to your glyph set (placeholder if unknown).
+- [ ] Render `CUSTOM_*` controls from their declaration; bind behavior only when the host registered a handler for the id.
 - [ ] Render `Setting` as the menu container; populate it from `collapseInSetting` (§4).
-- [ ] Bind behavior by id; never read behavior from JSON.
-- [ ] Test against the golden fixture in [§9c](#9c-full-document-the-canonical-fixture).
+- [ ] Bind built-in behavior by id; never read behavior from JSON.
+- [ ] Test against the golden fixtures in [§9c](#9c-full-document-the-canonical-fixture) and [§9d](#9d-with-a-custom-control--an-icon-override).
+
+```
+
 ```
