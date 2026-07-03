@@ -25,7 +25,10 @@ export class ControlRegistry {
   private listeners = new Set<Listener>();
 
   constructor() {
-    this.load();
+    // Fresh install (no persisted registry) → seed the canonical default controls so
+    // the default layout's time readout resolves. A returning user's saved registry
+    // (incl. a deleted default) is respected — we don't re-seed on top of it.
+    if (!this.load()) this.seedDefaults();
   }
 
   // ---- reads (everything resolves through here) --------------------------
@@ -82,23 +85,19 @@ export class ControlRegistry {
     const id = this.uniqueId(
       isDynamic ? normalizeVariable(input.variable) : `CUSTOM_${slugify(meta.label)}`,
     );
-    const variable = isDynamic ? id : undefined;
-    this.custom.set(id, {
-      id,
-      label: isDynamic ? id : meta.label,
-      icon: meta.icon,
-      kind: "text",
-      custom: true,
-      textType: input.textType,
-      text: textOf(input.textType, { separator, variable, showNumber }),
-      ...(separator !== undefined ? { separator } : {}),
-      ...(variable !== undefined ? { variable } : {}),
-      ...(showNumber !== undefined ? { showNumber } : {}),
-      defaultSpan: isTimeAll ? 3 : 2,
-      maxSpan: isTimeAll ? 6 : 4,
-    });
+    // Dynamic Text's variable IS its id (the SDK handle).
+    this.custom.set(id, makeTextDef(id, input.textType, { separator, showNumber, variable: isDynamic ? id : undefined }));
     this.changed();
     return id;
+  }
+  // Seed the canonical default controls used by the fresh / reset default layout.
+  // Idempotent: only creates what's missing (so a user who deleted it isn't fought,
+  // except via an explicit resetToDefault). Currently just the Time Consumed readout
+  // that replaced the former built-in.
+  seedDefaults(): void {
+    if (this.custom.has(DEFAULT_TIME_CONTROL_ID)) return;
+    this.custom.set(DEFAULT_TIME_CONTROL_ID, makeTextDef(DEFAULT_TIME_CONTROL_ID, "timeConsumed", {}));
+    this.changed();
   }
   removeCustom(id: ControlId): void {
     if (this.custom.delete(id)) {
@@ -154,10 +153,11 @@ export class ControlRegistry {
       /* ignore */
     }
   }
-  private load(): void {
+  // Returns whether persisted registry data was found (fresh installs seed defaults).
+  private load(): boolean {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
+      if (!raw) return false;
       const parsed = JSON.parse(raw) as Partial<PersistShape>;
       for (const def of parsed.custom ?? []) {
         if (!def || typeof def.id !== "string" || typeof def.icon !== "string") continue;
@@ -183,15 +183,47 @@ export class ControlRegistry {
           this.overrides.set(id, icon);
         }
       }
+      return true;
     } catch {
-      /* ignore */
+      return false;
     }
   }
 }
 
+// The id of the Time Consumed text control seeded into the fresh / reset default
+// layout, replacing the former TimeConsumed built-in. Deterministic (= the id
+// addText would mint for "Time Consumed") so the default layout can reference it.
+export const DEFAULT_TIME_CONTROL_ID = "CUSTOM_time_consumed";
+
 // Lowercase slug for CUSTOM_ ids: non-alphanumerics collapse to underscores.
 function slugify(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+// Build a kind === "text" ControlDef. Shared by addText and seedDefaults so a seeded
+// control is byte-identical to a user-added one. `extras.variable` (Dynamic Text)
+// doubles as the SDK handle; separator/showNumber apply to TimeAll / Current Chapter.
+function makeTextDef(
+  id: ControlId,
+  textType: TextType,
+  extras: { separator?: string; variable?: string; showNumber?: boolean },
+): ControlDef {
+  const meta = TEXT_TYPE_BY_TYPE.get(textType);
+  const isTimeAll = textType === "timeAll";
+  return {
+    id,
+    label: textType === "dynamicText" ? id : meta?.label ?? id,
+    icon: meta?.icon ?? FALLBACK_ICON,
+    kind: "text",
+    custom: true,
+    textType,
+    text: textOf(textType, extras),
+    ...(extras.separator !== undefined ? { separator: extras.separator } : {}),
+    ...(extras.variable !== undefined ? { variable: extras.variable } : {}),
+    ...(extras.showNumber !== undefined ? { showNumber: extras.showNumber } : {}),
+    defaultSpan: isTimeAll ? 3 : 2,
+    maxSpan: isTimeAll ? 6 : 4,
+  };
 }
 
 // The SDK handle for a Dynamic Text control: a cdt_-prefixed identifier. Keeps the

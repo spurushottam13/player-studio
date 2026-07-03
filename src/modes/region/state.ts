@@ -7,7 +7,7 @@
 // viewport's collapse list (see reconcileSetting). See spec.md.
 
 import type { ControlId } from "../../controls";
-import { registry } from "../../registry";
+import { DEFAULT_TIME_CONTROL_ID, registry } from "../../registry";
 import { DEFAULT_THEME } from "../types";
 import type { Theme } from "../types";
 
@@ -69,7 +69,7 @@ function defaultRegions(): Regions {
       emptyRow({ start: ["VideoProgress"] }),
       emptyRow({ start: ["Backward", "PlayNPause", "Forward"] }),
       emptyRow({
-        start: ["TimeAll"],
+        start: [DEFAULT_TIME_CONTROL_ID],
         end: ["Speed", "Quality", "Setting", "FullScreen"],
       }),
     ],
@@ -262,6 +262,9 @@ export class RegionState {
     this.changed();
   }
   resetToDefault(): void {
+    // Re-create the seeded default text control (the canonical bar references it),
+    // in case it was deleted, so Reset always restores the full default bar.
+    registry.seedDefaults();
     this.layouts = defaultLayouts();
     this.theme = { ...DEFAULT_THEME };
     this.changed();

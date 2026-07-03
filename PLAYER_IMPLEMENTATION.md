@@ -11,10 +11,18 @@ contract defined in [`spec.md`](./spec.md). The authoring side (dashboard) is in
 
 > **Schema:** this document describes **`schemaVersion` 2.1**, which wraps the
 > layout in per-**viewport** entries, adds **collapse-in-Setting**, and adds an
-> optional top-level **`controls`** block carrying **custom controls** and
-> **icon overrides** (see [§7b](#7b-custom-controls--icon-overrides-the-controls-block)).
-> The flat 1.0 shape (single `regions` block, no viewports) is superseded; 2.0
-> layouts (no `controls` block) render unchanged under 2.1.
+> optional top-level **`controls`** block carrying **custom controls**, **text
+> controls**, and **icon overrides** (see [§7b](#7b-custom-controls--icon-overrides-the-controls-block)
+> / [§7c](#7c-text-controls-the-controls-block)). The flat 1.0 shape (single
+> `regions` block, no viewports) is superseded; 2.0 layouts (no `controls` block)
+> render unchanged under 2.1.
+
+> **Time readouts changed:** **all** time readouts — `TimeConsumed`, `TimeLeft`,
+> `TimeDuration`, `TimeAll` — are **no longer reserved built-ins**. They are authored
+> as **text controls** and ship a full declaration in the `controls` block
+> ([§7c](#7c-text-controls-the-controls-block)); the authoring tool's default layout
+> ships a seeded `TimeConsumed` text control (id `CUSTOM_time_consumed`). The reserved
+> catalog is now **17** ids ([§7](#7-controls-grididentifier)).
 
 ---
 
@@ -38,7 +46,7 @@ key:
       /* shared across viewports */
     },
     "controls": {
-      /* OPTIONAL: custom controls + icon overrides — see §7b */
+      /* OPTIONAL: custom controls, text controls + icon overrides — see §7b / §7c */
     },
     "viewports": {
       /* default | 490 | 300 | 200 */
@@ -151,8 +159,10 @@ viewports → regions → rows (stacked) → groups (horizontal) → items (grid
 ```
 
 - **`theme`** is global (one set of tokens for all viewports).
-- **`controls`** (optional, global) declares **custom controls** and **icon
-  overrides** used anywhere in the document — see [§7b](#7b-custom-controls--icon-overrides-the-controls-block).
+- **`controls`** (optional, global) declares **custom controls**, **text controls**,
+  and **icon overrides** used anywhere in the document — see
+  [§7b](#7b-custom-controls--icon-overrides-the-controls-block) /
+  [§7c](#7c-text-controls-the-controls-block).
 - Each **viewport** has its own `regions` **and** its own `collapseInSetting` list.
 - A **region** is an ordered array of **rows**, stacked top→bottom.
 - A **row** is one or more **groups** laid out horizontally.
@@ -313,13 +323,15 @@ layout engine required:
 ## 7. Controls (`gridIdentifier`)
 
 Each item in a group is a control **id** — the stable, cross-platform key the
-player binds rendering _and behavior_ to. Usually it's one of the **21 reserved
+player binds rendering _and behavior_ to. Usually it's one of the **17 reserved
 `gridIdentifier`s** below (shared by the authoring tool, web, Android, and iOS); it
-may also be a **`CUSTOM_*`** id declared in the `controls` block
-([§7b](#7b-custom-controls--icon-overrides-the-controls-block)). A control absent
-from the JSON is simply not rendered (no explicit "hidden" flag).
+may also be a **`CUSTOM_*`** custom/text id or a **`cdt_*`** dynamic-text id
+declared in the `controls` block
+([§7b](#7b-custom-controls--icon-overrides-the-controls-block) /
+[§7c](#7c-text-controls-the-controls-block)). A control absent from the JSON is
+simply not rendered (no explicit "hidden" flag).
 
-### The 21-control catalog (the contract)
+### The 17-control catalog (the contract)
 
 | #   | gridIdentifier     | kind   | render hint                                                      |
 | --- | ------------------ | ------ | ---------------------------------------------------------------- |
@@ -338,16 +350,20 @@ from the JSON is simply not rendered (no explicit "hidden" flag).
 | 13  | `SaveVideoOffline` | icon   |                                                                  |
 | 14  | `Setting`          | icon   | menu container — auto-managed (see [§4](#4-collapse-in-setting)) |
 | 15  | `Speed`            | icon   |                                                                  |
-| 16  | `TimeConsumed`     | text   | `HH:MM`                                                          |
-| 17  | `TimeLeft`         | text   | `HH:MM`                                                          |
-| 18  | `TimeDuration`     | text   | `HH:MM`                                                          |
-| 19  | `TimeAll`          | text   | `HH:MM / HH:MM`                                                  |
-| 20  | `VideoProgress`    | slider | typically `fill`                                                 |
-| 21  | `Volume`           | slider | `fill`-capable                                                   |
+| 16  | `VideoProgress`    | slider | typically `fill`                                                 |
+| 17  | `Volume`           | slider | `fill`-capable                                                   |
 
-> The **kind** is _not_ in the JSON — it is a property of the id, known to the
-> player from this static catalog. The JSON only ships ids; the player looks up
-> kind, icon, and behavior locally.
+> **All time built-ins were removed** (`TimeConsumed` / `TimeLeft` / `TimeDuration`
+> / `TimeAll`). They — plus Current Chapter, Dynamic Text, and Title — are now
+> authored as **text controls** and ship full declarations in the `controls` block;
+> see [§7c](#7c-text-controls-the-controls-block).
+
+> The **kind** is _not_ in the JSON for a built-in — it is a property of the id,
+> known to the player from this static catalog. The JSON only ships ids; the player
+> looks up kind, icon, and behavior locally. (Text and custom controls _do_ carry
+> their `kind` in the `controls` block, since the player has no catalog entry for
+> them — see [§7b](#7b-custom-controls--icon-overrides-the-controls-block) /
+> [§7c](#7c-text-controls-the-controls-block).)
 
 ### kind → how to render
 
@@ -373,17 +389,17 @@ interface ControlEntry {
   onActivate?: (player: Player) => void;    // behavior — bound here, not in JSON
 }
 
-const REGISTRY: Record<ControlId, ControlEntry> = {   // 21 built-ins; host may add CUSTOM_* ids
+const REGISTRY: Record<ControlId, ControlEntry> = {   // 17 built-ins; host may add CUSTOM_* / cdt_* ids
   PlayNPause: { kind: "icon", icon: PlayIcon, onActivate: (p) => p.toggle() },
   Forward:    { kind: "icon", icon: FwdIcon,  onActivate: (p) => p.seek(+10) },
   Setting:    { kind: "icon", icon: GearIcon, onActivate: (p) => p.toggleSettingMenu() },
   VideoProgress: { kind: "slider", onActivate: /* seek to ratio */ },
-  TimeAll:    { kind: "text", textFormat: (s) => `${fmt(s.t)} / ${fmt(s.dur)}` },
-  // …all 21…
+  Volume:     { kind: "slider", onActivate: /* set volume */ },
+  // …all 17 (time readouts are now text controls — see §7c)…
 };
 ```
 
-> Iconography for the **21 built-ins** is **not** shipped in the JSON — native
+> Iconography for the **17 built-ins** is **not** shipped in the JSON — native
 > teams provide matching glyphs (same SVGs, or agreed SF Symbols / Material
 > equivalents) for parity. **Custom controls and icon overrides** _do_ ship a
 > Lucide icon **name** (a string, never raw SVG) in the `controls` block; map that
@@ -404,7 +420,7 @@ are declared.
 "controls": {
   "CUSTOM_like": {            // 1) CUSTOM CONTROL — full declaration
     "custom": true,
-    "kind":   "icon",         // currently always "icon"
+    "kind":   "icon",         // "icon" or "text" (text customs — see §7c)
     "label":  "Like",
     "icon":   "Heart"         // a Lucide icon NAME (never raw SVG)
   },
@@ -413,10 +429,10 @@ are declared.
 ```
 
 **1. Custom controls.** A user-defined control whose id is `CUSTOM_<slug>` (the
-`CUSTOM_` prefix guarantees no collision with the 21 reserved ids). The player has
-no local catalog entry for it, so it is **fully declared**: `kind` (currently
-always `icon`), `label`, and `icon`. It sits in `items` / `collapseInSetting`
-exactly like a built-in id.
+`CUSTOM_` prefix guarantees no collision with the reserved ids). The player has no
+local catalog entry for it, so it is **fully declared**: `kind` (`icon`, or `text`
+for the [§7c](#7c-text-controls-the-controls-block) text controls), `label`, and
+`icon`. It sits in `items` / `collapseInSetting` exactly like a built-in id.
 
 > **No built-in behavior.** A custom control carries layout + glyph only. The
 > player renders it, but activation does nothing unless the **host app** registers
@@ -443,20 +459,19 @@ For any item id seen while rendering (in `items` **or** `collapseInSetting`), wi
 function resolveControl(id: ControlId, controls: Controls): RenderEntry {
   const decl = controls[id];
 
-  // kind: declared for customs; from the local catalog for built-ins.
+  // kind: declared for customs (icon | text); from the local catalog for built-ins.
   const kind = decl?.custom ? (decl.kind ?? "icon") : REGISTRY[id].kind;
 
   // icon: a declared `icon` (override or custom) WINS over the catalog default.
   const iconName = decl?.icon ?? CATALOG_ICON[id]; // a Lucide name
   const icon = resolveLucide(iconName) ?? PLACEHOLDER_ICON; // map name → glyph asset
 
+  // text: built-ins format from the catalog; a text custom formats from its
+  // declaration's `textType` (+ separator / variable / showNumber) — see §7c.
+  const textFormat = decl?.custom ? textFormatFor(decl) : REGISTRY[id]?.textFormat;
+
   // behavior: only built-ins (and host-registered customs) have one.
-  return {
-    kind,
-    icon,
-    onActivate: REGISTRY[id]?.onActivate,
-    textFormat: REGISTRY[id]?.textFormat,
-  };
+  return { kind, icon, onActivate: REGISTRY[id]?.onActivate, textFormat };
 }
 ```
 
@@ -469,6 +484,85 @@ function resolveControl(id: ControlId, controls: Controls): RenderEntry {
   otherwise unchanged.
 - Render every control — bar and Setting menu — through `resolveControl`, so custom
   glyphs and overrides apply uniformly.
+
+---
+
+## 7c. Text controls (the `controls` block)
+
+A **text control** is a `controls` entry with `"kind": "text"` and a **`textType`**
+discriminator. These replace the old time built-ins (`TimeConsumed`, `TimeLeft`,
+`TimeDuration`, `TimeAll`) and add three new elements (Current Chapter, Dynamic Text,
+Title). The authoring tool's **"+ Add text"** flow produces them; each is declared in
+full because the player has no catalog entry for its id. (The default layout ships a
+seeded `timeConsumed` text control, id `CUSTOM_time_consumed` — see [§9c](#9c-full-document-the-canonical-fixture).)
+
+```jsonc
+"controls": {
+  "CUSTOM_time_all": {
+    "custom": true, "kind": "text", "label": "Time All", "icon": "Clock",
+    "textType": "timeAll", "separator": " / "     // glue between elapsed / total
+  },
+  "CUSTOM_current_chapter": {
+    "custom": true, "kind": "text", "label": "Current Chapter", "icon": "ListVideo",
+    "textType": "currentChapter", "showNumber": true   // append the "02/14" status
+  },
+  "cdt_promoName": {
+    "custom": true, "kind": "text", "label": "cdt_promoName", "icon": "Braces",
+    "textType": "dynamicText", "variable": "cdt_promoName"  // filled from SDK input
+  }
+}
+```
+
+### The `textType` catalog
+
+| `textType`       | id form       | renders                                | extra field           |
+| ---------------- | ------------- | -------------------------------------- | --------------------- |
+| `timeConsumed`   | `CUSTOM_*`    | elapsed time `HH:MM`                   | —                     |
+| `timeLeft`       | `CUSTOM_*`    | remaining time `HH:MM`                 | —                     |
+| `timeDuration`   | `CUSTOM_*`    | total duration `HH:MM`                 | —                     |
+| `timeAll`        | `CUSTOM_*`    | `elapsed` + `separator` + `duration`   | `separator` (`" / "`) |
+| `currentChapter` | `CUSTOM_*`    | current chapter **title** (text)       | `showNumber` (bool)   |
+| `dynamicText`    | `cdt_*`       | value of the `variable`, set at load   | `variable` (`cdt_*`)  |
+| `title`          | `CUSTOM_*`    | the video title                        | —                     |
+
+- **Time readouts** format from player time, exactly as the old built-ins did.
+  `timeAll` joins elapsed and total with its **`separator`** (default `" / "`).
+- **`currentChapter`** renders the **chapter title** (a string, not a number). When
+  **`showNumber`** is `true`, append the `NN/MM` position status (e.g.
+  `Introduction 02/14`); when `false` or absent, show the title alone.
+- **`dynamicText`** renders host-supplied text. Its id **and** `variable` are a
+  `cdt_`-prefixed name; the SDK/host provides the value for that variable at player
+  load (e.g. `player.setVariable("cdt_promoName", "Summer Sale")`). Until it's set,
+  render empty (or the `variable` name in an authoring preview).
+- **`title`** renders the current video's title.
+
+### Rendering
+
+Render text controls with the ordinary `kind: "text"` path (a `<span>`/`Text`) — the
+only difference from a built-in readout is that the formatter comes from the
+declaration, not a local catalog entry. Derive it from `textType`:
+
+```ts
+function textFormatFor(decl: TextDecl): (s: PlayerState) => string {
+  switch (decl.textType) {
+    case "timeConsumed":   return (s) => fmt(s.t);
+    case "timeLeft":       return (s) => fmt(s.dur - s.t);
+    case "timeDuration":   return (s) => fmt(s.dur);
+    case "timeAll":        return (s) => `${fmt(s.t)}${decl.separator ?? " / "}${fmt(s.dur)}`;
+    case "currentChapter": return (s) =>
+      decl.showNumber ? `${s.chapter.title} ${pad(s.chapter.index)}/${pad(s.chapter.count)}`
+                      : s.chapter.title;
+    case "dynamicText":    return (s) => s.variables[decl.variable!] ?? "";
+    case "title":          return (s) => s.title;
+    default:               return () => "";
+  }
+}
+```
+
+- A text control has **no `onActivate`** — it is a passive readout (never
+  collapsible into Setting, which is icon-only).
+- `separator`, `showNumber`, and `variable` appear **only** on the relevant
+  `textType`; ignore any that don't apply.
 
 ---
 
@@ -527,7 +621,7 @@ function renderControl(id: ControlId, controls: Controls, player: Player) {
     case "icon":
       return iconButton(c.icon, () => c.onActivate?.(player)); // custom: no-op unless host-bound
     case "text":
-      return textReadout(id, c.textFormat!); // subscribe to player time
+      return textReadout(id, c.textFormat!); // built-in time or a text control (§7c)
     case "slider":
       return slider(id, player); // progress / volume
   }
@@ -552,7 +646,7 @@ and re-resolve the viewport on size-class / configuration changes.
     "bottom": [
       {
         "groups": [
-          { "align": "start", "items": ["TimeAll"] },
+          { "align": "start", "items": ["Chapters"] },
           {
             "align": "end",
             "items": ["Speed", "Quality", "Setting", "FullScreen"]
@@ -564,6 +658,11 @@ and re-resolve the viewport on size-class / configuration changes.
   "collapseInSetting": []
 }
 ```
+
+> A time readout on the left would be a **text control** (`kind: "text"`) declared in
+> the top-level `controls` block ([§7c](#7c-text-controls-the-controls-block)); this
+> viewport-only snippet uses a built-in icon to stay self-contained. See [§9c](#9c-full-document-the-canonical-fixture)
+> for the full document with a seeded time readout.
 
 ### 9b. Narrow viewport — controls folded into Setting
 
@@ -593,8 +692,9 @@ At `≤300`, `Speed` + `Quality` are collapsed into the Setting menu. Note
 
 Exactly what the studio's region mode emits for its default — `default` carries
 the canonical bar, narrow viewports are left blank (player falls through to
-`default`, per [§3](#3-viewports--choosing-which-layout-to-render)). No custom
-controls or overrides, so the `controls` block is omitted. Use as the golden
+`default`, per [§3](#3-viewports--choosing-which-layout-to-render)). The bar's time
+readout is a **seeded text control** (`CUSTOM_time_consumed`), so the `controls`
+block declares it ([§7c](#7c-text-controls-the-controls-block)). Use as the golden
 fixture for parser tests:
 
 ```json
@@ -608,6 +708,15 @@ fixture for parser tests:
     "barHeight": 40,
     "gap": 8
   },
+  "controls": {
+    "CUSTOM_time_consumed": {
+      "custom": true,
+      "kind": "text",
+      "label": "Time Consumed",
+      "icon": "Clock",
+      "textType": "timeConsumed"
+    }
+  },
   "viewports": {
     "default": {
       "regions": {
@@ -618,7 +727,7 @@ fixture for parser tests:
           { "align": "start", "items": ["Backward", "PlayNPause", "Forward"] },
           {
             "groups": [
-              { "align": "start", "items": ["TimeAll"] },
+              { "align": "start", "items": ["CUSTOM_time_consumed"] },
               {
                 "align": "end",
                 "items": ["Speed", "Quality", "Setting", "FullScreen"]
@@ -706,6 +815,74 @@ while keeping its native fullscreen behavior:
 }
 ```
 
+### 9e. With text controls (Time All + Dynamic Text)
+
+A `Time All` readout (`00:00 / 00:00`) on the left and a host-filled `cdt_promoName`
+label on the right. Both are `kind: "text"` entries in the `controls` block, keyed
+by their ids; the player renders each from its `textType` (§7c):
+
+```json
+{
+  "schemaVersion": "2.1",
+  "layoutModel": "region",
+  "theme": {
+    "primary": "#1e90ff",
+    "secondary": "#ffffff",
+    "iconSize": 22,
+    "barHeight": 40,
+    "gap": 8
+  },
+  "controls": {
+    "CUSTOM_time_all": {
+      "custom": true,
+      "kind": "text",
+      "label": "Time All",
+      "icon": "Clock",
+      "textType": "timeAll",
+      "separator": " / "
+    },
+    "cdt_promoName": {
+      "custom": true,
+      "kind": "text",
+      "label": "cdt_promoName",
+      "icon": "Braces",
+      "textType": "dynamicText",
+      "variable": "cdt_promoName"
+    }
+  },
+  "viewports": {
+    "default": {
+      "regions": {
+        "top": [],
+        "center": [],
+        "bottom": [
+          { "align": "fill", "items": ["VideoProgress"] },
+          {
+            "groups": [
+              { "align": "start", "items": ["CUSTOM_time_all"] },
+              { "align": "end", "items": ["cdt_promoName", "FullScreen"] }
+            ]
+          }
+        ]
+      },
+      "collapseInSetting": []
+    },
+    "490": {
+      "regions": { "top": [], "center": [], "bottom": [] },
+      "collapseInSetting": []
+    },
+    "300": {
+      "regions": { "top": [], "center": [], "bottom": [] },
+      "collapseInSetting": []
+    },
+    "200": {
+      "regions": { "top": [], "center": [], "bottom": [] },
+      "collapseInSetting": []
+    }
+  }
+}
+```
+
 ---
 
 ## 10. Resilience (player-side rules)
@@ -723,6 +900,8 @@ cases it still handles:
 | `controls` block absent (a 2.0 document)   | render every id from the local catalog (no customs/overrides) |
 | Declared `icon` name unknown to this build | draw a placeholder glyph (don't fail)                         |
 | `CUSTOM_*` control with no host handler    | render its glyph; activation is a no-op (decorative)          |
+| Text control (`kind: "text"`, `textType`)  | render by `textType` (§7c); it's a passive readout, no behavior |
+| `dynamicText` variable not set by host     | render empty until the host sets the `cdt_*` variable         |
 
 Because correctness is enforced upstream (dashboard validates against the shared
 `player.schema.json` before save — see [`spec.md` §9](./spec.md)), the player can
@@ -741,13 +920,14 @@ fallback above.
 - [ ] Resolve the viewport by player width; **re-resolve on resize** (§3).
 - [ ] Normalize both row forms (shorthand + `groups`) to `Group[]`.
 - [ ] Implement the four `align` modes per platform.
-- [ ] Build the `gridIdentifier → {kind, icon, behavior}` registry (all 21).
+- [ ] Build the `gridIdentifier → {kind, icon, behavior}` registry (all 17).
 - [ ] Parse the optional `controls` block; resolve every item's glyph/kind through it (§7b).
 - [ ] Let a declared `icon` (override or custom) replace the catalog glyph; map the Lucide name to your glyph set (placeholder if unknown).
 - [ ] Render `CUSTOM_*` controls from their declaration; bind behavior only when the host registered a handler for the id.
+- [ ] Render `kind: "text"` controls by their `textType` (time / chapter / dynamic / title); wire `dynamicText` to the host's `cdt_*` variables (§7c).
 - [ ] Render `Setting` as the menu container; populate it from `collapseInSetting` (§4).
 - [ ] Bind built-in behavior by id; never read behavior from JSON.
-- [ ] Test against the golden fixtures in [§9c](#9c-full-document-the-canonical-fixture) and [§9d](#9d-with-a-custom-control--an-icon-override).
+- [ ] Test against the golden fixtures in [§9c](#9c-full-document-the-canonical-fixture), [§9d](#9d-with-a-custom-control--an-icon-override), and the text controls in [§9e](#9e-with-text-controls-time-all--dynamic-text).
 
 ```
 

@@ -14,7 +14,15 @@ This doc generalizes the working POC in [`src/modes/region/`](./src/modes/region
 > **Schema:** the dashboard emits **`schemaVersion` 2.1** — per-**viewport**
 > layouts (`default | 490 | 300 | 200`), each with its own `collapseInSetting`
 > list, under one shared `theme`, plus an optional top-level **`controls`** block
-> declaring **custom controls** and **icon overrides** ([§2b](#2b-the-control-registry-built-ins--custom--overrides) / [§5](#5-serializer--internal-model--output-json)).
+> declaring **custom controls**, **text controls**, and **icon overrides**
+> ([§2b](#2b-the-control-registry-built-ins--custom--overrides) / [§5](#5-serializer--internal-model--output-json)).
+
+> **17 built-ins.** **All** time readouts (`TimeConsumed`, `TimeLeft`,
+> `TimeDuration`, `TimeAll`) are no longer built-in chips — they (plus Current
+> Chapter, Dynamic Text, and Title) are added through the **"+ Add text"** flow as
+> **text controls** ([§6f](#6f-text-controls--add-text)). The default layout seeds a
+> `TimeConsumed` text control (`registry.seedDefaults()`) so the default bar still
+> shows elapsed time.
 
 ---
 
@@ -23,19 +31,21 @@ This doc generalizes the working POC in [`src/modes/region/`](./src/modes/region
 ```
 ┌──────────────────────┐  drag  ┌──────────────────────────────┐  serialize ┌─────────────┐
 │  Control palette      │ ─────► │  Player canvas (one viewport) │ ─────────► │ console.log │
-│  21 built-ins + custom│  drop  │  regions → rows → lanes        │  on change  │ / code panel│
+│  17 built-ins + custom│  drop  │  regions → rows → lanes        │  on change  │ / code panel│
 │  + "Add control" +    │ ◄───── │  (top / center / bottom)       │             │  (the JSON) │
-│  "Collapse in Setting"│drag-back└──────────────────────────────┘             └─────────────┘
-└──────────────────────┘            ▲  Viewport switcher: Default · ≤490 · ≤300 · ≤200
+│  "Add text" +         │drag-back└──────────────────────────────┘             └─────────────┘
+│  "Collapse in Setting"│            ▲  Viewport switcher: Default · ≤490 · ≤300 · ≤200
+└──────────────────────┘
 ```
 
 Pieces:
 
-1. **Palette (left)** — draggable control chips: the **21 built-ins plus any
-   user-added custom controls** (drag source + remove target). Above them an
-   **"Add custom control"** button (pick any Lucide icon); each chip also exposes
-   inline actions to **change its icon**, **reset** an override, or **delete** a
-   custom control (§6d). Below them a **"Collapse in Setting"** bin.
+1. **Palette (left)** — draggable control chips: the **17 built-ins plus any
+   user-added custom + text controls** (drag source + remove target). Above them an
+   **"Add custom control"** button (pick any Lucide icon) and an **"Add text"**
+   button (time readouts, current chapter, dynamic text, title — §6f); each chip
+   also exposes inline actions to **change its icon**, **reset** an override, or
+   **delete** a custom control (§6d). Below them a **"Collapse in Setting"** bin.
 2. **Canvas (center)** — a player mock split into three regions; drop zones build
    the layout. A **viewport switcher** above it swaps which viewport you're
    editing and resizes the preview.
@@ -96,23 +106,27 @@ interface Theme {
 
 ### A control's identity: the control id
 
-Every chip and placed item is keyed by a **control id**. Two kinds:
+Every chip and placed item is keyed by a **control id**. Three kinds:
 
-- A **built-in `gridIdentifier`** — one of the 21 stable cross-platform ids
+- A **built-in `gridIdentifier`** — one of the 17 stable cross-platform ids
   (`PlayNPause`, `VideoProgress`, …). These are the reserved contract.
-- A **custom id** `CUSTOM_<slug>` — a user-added control. The `CUSTOM_` prefix
-  (from the label, slugged + uniquified) guarantees no collision with the 21.
+- A **custom id** `CUSTOM_<slug>` — a user-added control (icon **or** text). The
+  `CUSTOM_` prefix (from the label, slugged + uniquified) guarantees no collision
+  with the built-ins.
+- A **dynamic-text id** `cdt_<name>` — a Dynamic Text control, keyed by its
+  SDK-facing variable name (§6f).
 
-The id's metadata (label, render `kind`, icon) is resolved through the **registry**
-(§2b), not the layout. The dashboard uses `kind` only to render the chip/preview and
-to decide what may collapse — it never writes a built-in's `kind` into the output
-JSON; custom controls _do_ carry their declaration (§5).
+The id's metadata (label, render `kind`, icon, and for text controls its `textType`
++ extras) is resolved through the **registry** (§2b), not the layout. The dashboard
+uses `kind` only to render the chip/preview and to decide what may collapse — it
+never writes a built-in's `kind` into the output JSON; custom and text controls _do_
+carry their declaration (§5).
 
 ---
 
 ## 2b. The control registry (built-ins + custom + overrides)
 
-The static 21-control table from the old POC is now a **runtime `ControlRegistry`**
+The static control table from the old POC is now a **runtime `ControlRegistry`**
 ([`src/registry.ts`](./src/registry.ts)) — a single app-wide singleton seeded from
 the built-in catalog ([`src/controls.ts`](./src/controls.ts)) and layered with the
 user's edits. It is the source of truth for _what a control is_; the layout state
@@ -120,11 +134,11 @@ user's edits. It is the source of truth for _what a control is_; the layout stat
 
 It owns three things:
 
-|                     | what                                                          | persisted                |
-| ------------------- | ------------------------------------------------------------- | ------------------------ |
-| **built-ins**       | the 21 `ControlDef`s (`id`, `label`, `kind`, `icon`) — frozen | in code                  |
-| **custom controls** | user-added `ControlDef`s, `custom: true`, id `CUSTOM_*`       | `player-studio:registry` |
-| **icon overrides**  | per-id `id → iconName` for built-ins whose glyph was swapped  | `player-studio:registry` |
+|                       | what                                                          | persisted                |
+| --------------------- | ------------------------------------------------------------- | ------------------------ |
+| **built-ins**         | the 17 `ControlDef`s (`id`, `label`, `kind`, `icon`) — frozen | in code                  |
+| **custom/text ctrls** | user-added `ControlDef`s, `custom: true`, id `CUSTOM_*` / `cdt_*` | `player-studio:registry` |
+| **icon overrides**    | per-id `id → iconName` for built-ins whose glyph was swapped  | `player-studio:registry` |
 
 ```ts
 class ControlRegistry {
@@ -135,7 +149,9 @@ class ControlRegistry {
   isCustom(id): boolean;
   isOverridden(id): boolean;
 
-  addCustom({ label, icon, kind? }): ControlId;   // mints a CUSTOM_<slug> id
+  addCustom({ label, icon, kind? }): ControlId;   // mints a CUSTOM_<slug> id (icon control)
+  addText({ textType, separator?, variable?, showNumber? }): ControlId;  // a text control (§6f)
+  seedDefaults(): void;       // ensure the seeded default text control exists (fresh + reset)
   removeCustom(id): void;                          // + purge it from every viewport (§3)
   setIcon(id, icon): void;    // custom → edit in place; built-in → record an override
   resetIcon(id): void;        // drop a built-in's override
@@ -143,6 +159,13 @@ class ControlRegistry {
 }
 export const registry = new ControlRegistry();
 ```
+
+> **Seeded default text control.** Since no time readout is a built-in, the default
+> layout references a **seeded** `CUSTOM_time_consumed` text control
+> (`DEFAULT_TIME_CONTROL_ID`). The registry creates it on a **fresh install** (no
+> persisted registry) and `state.resetToDefault()` re-creates it, so the default bar
+> always shows elapsed time. It's an ordinary text control otherwise — draggable,
+> editable, deletable.
 
 ### Icons are Lucide **names**
 
@@ -153,7 +176,9 @@ the full catalog (~1958 names) for the icon picker (§6d). The same name is what
 serializer writes into the `controls` block (§5), so the schema stays portable —
 each platform maps the name to its own glyph set.
 
-- **Custom controls** are `kind: "icon"` in v1 (no custom sliders/text).
+- **Custom controls** (`addCustom`) are `kind: "icon"`; **text controls**
+  (`addText`) are `kind: "text"` and carry a `textType` + extras (§6f). No custom
+  sliders.
 - A registry edit fans out as a normal change: the `Studio` re-emits on
   `registry.subscribe`, so palette, canvas, and the code panel all refresh live.
 
@@ -394,17 +419,17 @@ function serializeRow(row: Row): Group | { groups: Group[] } {
 ```
 
 `isFill(id) = registry.kindOf(id) === "slider"` — resolved through the registry so
-custom controls (always `icon` in v1) are never treated as fill.
+custom (`icon`) and text controls are never treated as fill.
 
-### The `controls` block (custom controls + icon overrides)
+### The `controls` block (custom controls, text controls + icon overrides)
 
 `schemaVersion` 2.1 adds an optional top-level **`controls`** object, keyed by id.
 It is built by walking every id **used** anywhere across the four viewports (lanes
 **and** collapse lists) and emitting a declaration only for ids the player can't
-resolve on its own — **custom controls** and **icon-overridden built-ins**. Stock
-built-ins stay id-only; the block is **omitted entirely when empty** (so a layout
-with no customs/overrides is byte-identical to the old 2.0 output plus the version
-bump).
+resolve on its own — **custom controls**, **text controls**, and **icon-overridden
+built-ins**. Stock built-ins stay id-only; the block is **omitted entirely when
+empty** (so a layout with no customs/overrides is byte-identical to the old 2.0
+output plus the version bump).
 
 ```ts
 function buildControlDecls(state: RegionState): Record<string, unknown> {
@@ -428,12 +453,23 @@ function buildControlDecls(state: RegionState): Record<string, unknown> {
           kind: def?.kind ?? "icon",
           label: def?.label ?? id,
           icon: registry.iconOf(id),
+          // Text controls ride their flavour + extras so the player can render them:
+          ...(def?.textType ? { textType: def.textType } : {}),      // §6f
+          ...(def?.separator !== undefined ? { separator: def.separator } : {}),   // timeAll
+          ...(def?.variable !== undefined ? { variable: def.variable } : {}),      // dynamicText
+          ...(def?.showNumber !== undefined ? { showNumber: def.showNumber } : {}), // currentChapter
         }
       : { icon: registry.iconOf(id) }; // override → new glyph only
   }
   return out;
 }
 ```
+
+A **text control** serializes like a custom control but with `kind: "text"` and a
+`textType`, plus the one extra field its flavour needs (`separator` for `timeAll`,
+`variable` for `dynamicText`, `showNumber` for `currentChapter`). The player reads
+`textType` to know what to render — see
+[`PLAYER_IMPLEMENTATION.md` §7c](./PLAYER_IMPLEMENTATION.md#7c-text-controls-the-controls-block).
 
 ### Whole-document build (all four viewports)
 
@@ -566,9 +602,9 @@ for (const ev of ["dragover", "dragleave", "drop"] as const)
 
 ### 6d. Custom controls & icon overrides (palette)
 
-The palette iterates **`registry.list()`** (built-ins ++ custom), not a static 21,
-and rebuilds on every change so newly-added custom chips appear and icon swaps show
-live. Three affordances drive the registry (§2b):
+The palette iterates **`registry.list()`** (built-ins ++ custom ++ text), not a
+static catalog, and rebuilds on every change so newly-added chips appear and icon
+swaps show live. Three affordances drive the registry (§2b):
 
 ```ts
 // "+ Add custom control" — pick any Lucide icon, then name it.
@@ -608,15 +644,59 @@ matches `Fullscreen`, and only the first ~240 matches render (refine to narrow).
 `pickIcon(opts?): Promise<string | null>` resolves the chosen **Lucide name** (never
 raw SVG) or `null` on cancel. Used by both "Add control" and "Change icon".
 
+### 6f. Text controls ("+ Add text")
+
+A second creator button next to "Add custom control". It opens the **text picker**
+([`src/ui/textpicker.ts`](./src/ui/textpicker.ts)) — a small modal listing the seven
+text flavours — and, on pick, calls `registry.addText(descriptor)`, which mints a
+`kind: "text"` control ([`src/controls.ts`](./src/controls.ts) `TextType`):
+
+| flavour          | id form       | preview      | extra input the picker collects        |
+| ---------------- | ------------- | ------------ | -------------------------------------- |
+| Time Left        | `CUSTOM_*`    | `00:00`      | —                                      |
+| Time Consumed    | `CUSTOM_*`    | `00:00`      | —                                      |
+| Time Duration    | `CUSTOM_*`    | `00:00`      | —                                      |
+| Time All         | `CUSTOM_*`    | `00:00 / 00:00` | **separator** text (default `" / "`) |
+| Current Chapter  | `CUSTOM_*`    | `Chapter Name` | **switch** — append the `02/14` number |
+| Dynamic Text     | `cdt_<name>`  | `cdt_<name>` | **variable** name (auto-prefixed `cdt_`) |
+| Title            | `CUSTOM_*`    | `Video Title` | —                                     |
+
+```ts
+// "+ Add text" — pick a flavour, then (for two of them) an extra field.
+addTextBtn.onclick = async () => {
+  const desc = await pickText();      // { textType, separator? | variable? | showNumber? }
+  if (desc) registry.addText(desc);   // → CUSTOM_* / cdt_* text control
+};
+```
+
+- All chips render an **icon** in the palette (as the old built-in time chips did)
+  but a **text** string on the canvas (`registry`-resolved `def.text`), so they never
+  collapse into Setting (icon-only, §6c).
+- The default layout ships one of these for free: a seeded **Time Consumed** text
+  control (`CUSTOM_time_consumed`) via `registry.seedDefaults()` (§2b) — the
+  `addText`-built stand-in for the removed `TimeConsumed` built-in.
+- **Time controls** always preview `00:00`; only **Time All** takes user input (its
+  `separator`). **Current Chapter** shows the chapter title as text, with a **switch**
+  to append the `02/14` position status (`showNumber`).
+- **Dynamic Text** is keyed by a `cdt_`-prefixed **variable** — both its id and the
+  handle the player/SDK fills at load. The picker keeps the user's casing, strips
+  non-identifier characters, and prefixes `cdt_` if missing;
+  `normalizeVariable` is shared with the picker's live preview so what you see is
+  what's stored.
+- Each is serialized into the `controls` block with its `textType` + extras (§5) and
+  rendered player-side by `textType`
+  ([`PLAYER_IMPLEMENTATION.md` §7c](./PLAYER_IMPLEMENTATION.md#7c-text-controls-the-controls-block)).
+
 ---
 
 ## 7. Toolbar (theme + reset)
 
 - **Primary / Secondary** color pickers → `state.setTheme({ primary | secondary })`
   (global — affects all viewports).
-- **Reset** → `state.resetToDefault()` (seeds the canonical `default` viewport).
-  Layout/theme only — **custom controls and icon overrides survive** (they live in
-  the separately-persisted registry, §2b).
+- **Reset** → `state.resetToDefault()` (seeds the canonical `default` viewport, and
+  re-creates the seeded `CUSTOM_time_consumed` text control it references — §2b).
+  Layout/theme only — **user custom controls and icon overrides survive** (they live
+  in the separately-persisted registry, §2b).
 - **Clear** → `state.clear()` (empties the **active** viewport only).
 
 ---
@@ -627,11 +707,16 @@ raw SVG) or `null` on cancel. Used by both "Add control" and "Change icon".
       (single-occurrence, prune-empty, persist + legacy migration).
 - [ ] `reconcileSetting()` on every change — derive the `Setting` icon from the
       collapse list (§3a).
-- [ ] `ControlRegistry` singleton: built-ins + custom controls + icon overrides,
-      persisted to `player-studio:registry`; `Studio` re-emits on its changes (§2b).
-- [ ] Palette iterates `registry.list()` (built-ins + custom), each `makeDraggable`;
-      disable the `Setting` chip; per-chip change-icon / reset / delete (§6d).
+- [ ] `ControlRegistry` singleton: 17 built-ins + custom/text controls + icon
+      overrides, persisted to `player-studio:registry`; `Studio` re-emits on its
+      changes (§2b). `seedDefaults()` on fresh install + reset creates the
+      `CUSTOM_time_consumed` text control the default layout references (§2b).
+- [ ] Palette iterates `registry.list()` (built-ins + custom + text), each
+      `makeDraggable`; disable the `Setting` chip; per-chip change-icon / reset /
+      delete (§6d).
 - [ ] "Add custom control" + `pickIcon` modal over the Lucide catalog (§6d/§6e).
+- [ ] "Add text" + `pickText` modal → `registry.addText`; collect the separator /
+      variable / show-number input per flavour (§6f).
 - [ ] Canvas: regions → gaps + rows → 3 lanes with `data-drop`; lane/gap drops;
       icons via `registry.iconOf`; re-render on registry changes (§6a).
 - [ ] Viewport switcher: `setViewport` + resize the preview (§6b).
@@ -640,11 +725,13 @@ raw SVG) or `null` on cancel. Used by both "Add control" and "Change icon".
 - [ ] Delete a custom control → `state.purge(id)` across all viewports + drop ghost
       ids on load (§3).
 - [ ] `serializeRow` + `buildControlDecls` + `buildRegionSpec` over all four
-      viewports → `schemaVersion` 2.1, `controls` omitted when empty (§5).
+      viewports → `schemaVersion` 2.1, `controls` omitted when empty, text controls
+      emit `textType` + extras (§5).
 - [ ] `state.subscribe` → `console.log(JSON)` / code panel (swap for API later).
 - [ ] Verify output validates against `player.schema.json` and round-trips through
       the player ([`PLAYER_IMPLEMENTATION.md` §9c](./PLAYER_IMPLEMENTATION.md#9c-full-document-the-canonical-fixture)),
-      including a custom control + override ([§9d](./PLAYER_IMPLEMENTATION.md#9d-with-a-custom-control--an-icon-override)).
+      including a custom control + override ([§9d](./PLAYER_IMPLEMENTATION.md#9d-with-a-custom-control--an-icon-override))
+      and text controls ([§9e](./PLAYER_IMPLEMENTATION.md#9e-with-text-controls-time-all--dynamic-text)).
 
 ```
 

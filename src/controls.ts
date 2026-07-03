@@ -1,4 +1,4 @@
-// Single source of truth for the 21 BUILT-IN player controls. Each control maps
+// Single source of truth for the 17 BUILT-IN player controls. Each control maps
 // its built-in id (the stable cross-platform contract id) to a Lucide icon NAME
 // and a render kind. The kind drives both how the studio renders the control and
 // how it is exported in player.json (see spec.md §6).
@@ -8,7 +8,11 @@
 
 import type { IconName } from "./icons";
 
-// The 21 reserved contract ids every platform binds behavior to.
+// The 17 reserved contract ids every platform binds behavior to. All time readouts
+// (TimeConsumed / TimeLeft / TimeDuration / TimeAll) are now authored as text
+// controls via the "+ Add text" flow (see TextType / registry.addText) — none are
+// built-ins. The default layout seeds a Time Consumed text control instead (see
+// registry.DEFAULT_TIME_CONTROL_ID).
 export type BuiltinId =
   | "AirPlay"
   | "Backward"
@@ -25,10 +29,6 @@ export type BuiltinId =
   | "SaveVideoOffline"
   | "Setting"
   | "Speed"
-  | "TimeConsumed"
-  | "TimeLeft"
-  | "TimeDuration"
-  | "TimeAll"
   | "VideoProgress"
   | "Volume";
 
@@ -92,10 +92,6 @@ export const BUILTINS: readonly ControlDef[] = [
   { id: "SaveVideoOffline", label: "SaveVideoOffline", icon: "Download", kind: "icon", defaultSpan: 1, maxSpan: 1 },
   { id: "Setting", label: "Setting", icon: "Settings", kind: "icon", defaultSpan: 1, maxSpan: 1 },
   { id: "Speed", label: "Speed", icon: "Timer", kind: "icon", defaultSpan: 1, maxSpan: 1 },
-  { id: "TimeConsumed", label: "TimeConsumed", icon: "Clock", kind: "text", text: "00:00", defaultSpan: 2, maxSpan: 4 },
-  { id: "TimeLeft", label: "TimeLeft", icon: "ClockArrowDown", kind: "text", text: "00:00", defaultSpan: 2, maxSpan: 4 },
-  { id: "TimeDuration", label: "TimeDuration", icon: "Clock3", kind: "text", text: "00:00", defaultSpan: 2, maxSpan: 4 },
-  { id: "TimeAll", label: "TimeAll", icon: "Clock", kind: "text", text: "00:00 / 00:00", defaultSpan: 3, maxSpan: 6 },
   // Sliders — render at flex width; export with align "fill" (region) / fraction (free).
   { id: "VideoProgress", label: "VideoProgress", icon: "SlidersHorizontal", kind: "slider", defaultSpan: 5, maxSpan: INF },
   { id: "Volume", label: "Volume", icon: "Volume2", kind: "slider", defaultSpan: 3, maxSpan: INF },
