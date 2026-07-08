@@ -9,13 +9,15 @@ contract defined in [`spec.md`](./spec.md). The authoring side (dashboard) is in
 > natively per platform, keyed by the control's `gridIdentifier`. The JSON never
 > carries behavior — see [§7](#7-controls-grididentifier).
 
-> **Schema:** this document describes **`schemaVersion` 2.1**, which wraps the
-> layout in per-**viewport** entries, adds **collapse-in-Setting**, and adds an
-> optional top-level **`controls`** block carrying **custom controls**, **text
-> controls**, and **icon overrides** (see [§7b](#7b-custom-controls--icon-overrides-the-controls-block)
-> / [§7c](#7c-text-controls-the-controls-block)). The flat 1.0 shape (single
-> `regions` block, no viewports) is superseded; 2.0 layouts (no `controls` block)
-> render unchanged under 2.1.
+> **Schema:** this document describes **`schemaVersion` 3.0**: per-**viewport**
+> entries, **collapse-in-Setting**, an optional top-level **`controls`** block
+> carrying **custom controls**, **text controls**, and **icon overrides** (see
+> [§7b](#7b-custom-controls--icon-overrides-the-controls-block)
+> / [§7c](#7c-text-controls-the-controls-block)), and **lane-keyed rows** —
+> 3.0 replaces 2.x's ordered `align` group arrays with rows keyed by
+> `start` | `center` | `end` ([§5](#5-row-shape-lane-keyed)); fill controls stay
+> inline in `items` and are flagged in a per-lane `fill` list. The flat 1.0 shape
+> (single `regions` block, no viewports) is superseded.
 
 > **Time readouts changed:** **all** time readouts — `TimeConsumed`, `TimeLeft`,
 > `TimeDuration`, `TimeAll` — are **no longer reserved built-ins**. They are authored
@@ -40,7 +42,7 @@ key:
   "title": "...",
   // ...existing fields...
   "playerLayout": {
-    "schemaVersion": "2.1",
+    "schemaVersion": "3.0",
     "layoutModel": "region",
     "theme": {
       /* shared across viewports */
@@ -75,7 +77,7 @@ default layout. Otherwise render the layout as received.
 
 ```jsonc
 {
-  "schemaVersion": "2.1",
+  "schemaVersion": "3.0",
   "layoutModel": "region", // always "region"
   "theme": {
     // ONE theme, shared by every viewport
@@ -83,7 +85,7 @@ default layout. Otherwise render the layout as received.
     "secondary": "#ffffff", // icon + text color
     "iconSize": 22, // density-independent (px / dp / pt)
     "barHeight": 40,
-    "gap": 8, // spacing between items inside a group
+    "gap": 8, // spacing between items inside a lane
   },
   "controls": {
     // OPTIONAL — declarations for custom controls
@@ -154,8 +156,8 @@ Each **viewport** is a self-contained design:
 ### The model in one line
 
 ```
-viewports → regions → rows (stacked) → groups (horizontal) → items (gridIdentifiers, ordered L→R)
-                                                            + collapseInSetting (icons in the Setting menu)
+viewports → regions → rows (stacked) → lanes (start | center | end) → items (gridIdentifiers, ordered L→R)
+                                                                    + collapseInSetting (icons in the Setting menu)
 ```
 
 - **`theme`** is global (one set of tokens for all viewports).
@@ -165,8 +167,10 @@ viewports → regions → rows (stacked) → groups (horizontal) → items (grid
   [§7c](#7c-text-controls-the-controls-block).
 - Each **viewport** has its own `regions` **and** its own `collapseInSetting` list.
 - A **region** is an ordered array of **rows**, stacked top→bottom.
-- A **row** is one or more **groups** laid out horizontally.
-- A **group** has an `align` and an ordered list of control ids (`items`).
+- A **row** is an object keyed by **lane** (`start` | `center` | `end`), laid
+  out horizontally in that order; empty lanes are omitted.
+- A **lane** has an ordered list of control ids (`items`) and an optional
+  `fill` list flagging which of those items stretch ([§5](#5-row-shape-lane-keyed)).
 - A region may be omitted or `[]` when it has no controls.
 
 ---
@@ -256,59 +260,50 @@ function renderSettingMenu(
 
 ---
 
-## 5. Row forms — the two shapes you must parse
+## 5. Row shape (lane-keyed)
 
-A `Row` is **either** the single-group shorthand **or** the multi-group form.
-The player must accept both (the dashboard emits the shorthand whenever a row has
-exactly one group).
-
-**Shorthand (single group):**
-
-```jsonc
-{ "align": "fill", "items": ["VideoProgress"] }
-```
-
-**Full (multiple groups):**
+A `Row` is an object keyed by lane. Each lane has an ordered `items` list and,
+when any of its items stretch, a `fill` list. Empty lanes are omitted.
 
 ```jsonc
 {
-  "groups": [
-    { "align": "start", "items": ["Backward", "PlayNPause", "Forward"] },
-    { "align": "end", "items": ["Speed", "Quality", "FullScreen"] },
-  ],
+  "start": { "items": ["Backward", "VideoProgress"], "fill": ["VideoProgress"] },
+  "end":   { "items": ["Forward"] }
 }
 ```
-
-Normalize both to `Group[]` before rendering:
 
 ```ts
-type Align = "start" | "center" | "end" | "fill";
-interface Group {
-  align: Align;
-  items: ControlId[];
-} // ids: built-in or CUSTOM_*
-type Row = Group | { groups: Group[] };
-
-function rowGroups(row: Row): Group[] {
-  return "groups" in row ? row.groups : [row];
+type Lane = "start" | "center" | "end";
+interface LaneGroup {
+  items: ControlId[]; // ids: built-in or CUSTOM_* / cdt_*, ordered L→R
+  fill?: ControlId[]; // subset of items that stretch; omitted when none
 }
+type Row = Partial<Record<Lane, LaneGroup>>;
 ```
+
+A **fill item stays inline in `items`** — its position in the sequence is the
+layout information; `fill` only says "this item absorbs the row's remaining
+space". The example above renders
+`Backward — VideoProgress (all remaining width) — Forward`. Only the
+`VideoProgress` slider ever appears in `fill`.
 
 ---
 
-## 6. Alignment semantics (`align`)
+## 6. Alignment semantics (lanes + `fill`)
 
-| `align`  | Meaning                                          | Web (flexbox)       | Android (Compose)     | iOS (SwiftUI)                 |
-| -------- | ------------------------------------------------ | ------------------- | --------------------- | ----------------------------- |
-| `start`  | Packed to the leading (left) edge                | default order       | leading children      | leading                       |
-| `center` | Centered within the row                          | `margin: auto`      | `Arrangement.Center`  | `Spacer()` both sides         |
-| `end`    | Packed to the trailing (right) edge              | `margin-left: auto` | `Spacer()` before     | `Spacer()` before             |
-| `fill`   | Expands to absorb all remaining horizontal space | `flex: 1`           | `Modifier.weight(1f)` | `.frame(maxWidth: .infinity)` |
+| lane        | Meaning                                          | Web (flexbox)       | Android (Compose)     | iOS (SwiftUI)                 |
+| ----------- | ------------------------------------------------ | ------------------- | --------------------- | ----------------------------- |
+| `start`     | Packed to the leading (left) edge                | default order       | leading children      | leading                       |
+| `center`    | Centered within the row                          | `margin: auto`      | `Arrangement.Center`  | `Spacer()` both sides         |
+| `end`       | Packed to the trailing (right) edge              | `margin-left: auto` | `Spacer()` before     | `Spacer()` before             |
+| `fill` item | Expands to absorb all remaining horizontal space | `flex: 1`           | `Modifier.weight(1f)` | `.frame(maxWidth: .infinity)` |
 
-- A row with `start` + `end` groups reads as **space-between**.
-- A `fill` group (typically `VideoProgress`) absorbs the slack so you never need
-  an empty spacer element.
-- Item gap inside a group = `theme.gap`.
+- A row with `start` + `end` lanes reads as **space-between**.
+- A `fill` item (the `VideoProgress` slider) absorbs the slack — from its own
+  position in `items` — so you never need an empty spacer element. A lane
+  containing a fill item must itself grow to make room for it (`flex: 1` on the
+  lane too, on web).
+- Item gap inside a lane = `theme.gap`.
 
 Every primitive maps to a first-class layout type on each platform — no custom
 layout engine required:
@@ -322,7 +317,7 @@ layout engine required:
 
 ## 7. Controls (`gridIdentifier`)
 
-Each item in a group is a control **id** — the stable, cross-platform key the
+Each item in a lane is a control **id** — the stable, cross-platform key the
 player binds rendering _and behavior_ to. Usually it's one of the **17 reserved
 `gridIdentifier`s** below (shared by the authoring tool, web, Android, and iOS); it
 may also be a **`CUSTOM_*`** custom/text id or a **`cdt_*`** dynamic-text id
@@ -351,7 +346,7 @@ simply not rendered (no explicit "hidden" flag).
 | 14  | `Setting`          | icon   | menu container — auto-managed (see [§4](#4-collapse-in-setting)) |
 | 15  | `Speed`            | icon   |                                                                  |
 | 16  | `VideoProgress`    | slider | typically `fill`                                                 |
-| 17  | `Volume`           | slider | `fill`-capable                                                   |
+| 17  | `Volume`           | icon   | hover/press reveals a 150px slider toward the side with room     |
 
 > **All time built-ins were removed** (`TimeConsumed` / `TimeLeft` / `TimeDuration`
 > / `TimeAll`). They — plus Current Chapter, Dynamic Text, and Title — are now
@@ -394,7 +389,7 @@ const REGISTRY: Record<ControlId, ControlEntry> = {   // 17 built-ins; host may 
   Forward:    { kind: "icon", icon: FwdIcon,  onActivate: (p) => p.seek(+10) },
   Setting:    { kind: "icon", icon: GearIcon, onActivate: (p) => p.toggleSettingMenu() },
   VideoProgress: { kind: "slider", onActivate: /* seek to ratio */ },
-  Volume:     { kind: "slider", onActivate: /* set volume */ },
+  Volume:     { kind: "icon", icon: VolumeIcon, onActivate: /* toggle mute / volume UI */ },
   // …all 17 (time readouts are now text controls — see §7c)…
 };
 ```
@@ -412,8 +407,7 @@ const REGISTRY: Record<ControlId, ControlEntry> = {   // 17 built-ins; host may 
 `schemaVersion` 2.1 adds an **optional** top-level `controls` object, keyed by id,
 carrying the _extra_ information a stock player can't infer for two authoring
 features. Untouched built-ins never appear here; the block is **omitted entirely
-when empty** (so a layout with no customs/overrides is a 2.0 document plus the
-version bump). Only **used** controls (placed on a bar or in `collapseInSetting`)
+when empty** (a layout with no customs/overrides simply has no `controls` key). Only **used** controls (placed on a bar or in `collapseInSetting`)
 are declared.
 
 ```jsonc
@@ -602,12 +596,16 @@ function renderRegions(
     const regionEl = makeRegion(region); // flex column
     for (const row of regions[region] ?? []) {
       const rowEl = makeRow(); // flex row, gap
-      for (const group of rowGroups(row)) {
-        const groupEl = makeGroup(group.align); // start|center|end|fill
+      for (const lane of ["start", "center", "end"] as const) {
+        const group = row[lane];
+        if (!group) continue;
+        const laneEl = makeLane(lane); // start|center|end; grows if it holds a fill item
         for (const id of group.items) {
-          groupEl.append(renderControl(id, controls, player)); // id known: catalog or `controls`
+          const el = renderControl(id, controls, player); // id known: catalog or `controls`
+          if (group.fill?.includes(id)) el.classList.add("fill"); // flex: 1
+          laneEl.append(el);
         }
-        rowEl.append(groupEl);
+        rowEl.append(laneEl);
       }
       regionEl.append(rowEl);
     }
@@ -623,20 +621,21 @@ function renderControl(id: ControlId, controls: Controls, player: Player) {
     case "text":
       return textReadout(id, c.textFormat!); // built-in time or a text control (§7c)
     case "slider":
-      return slider(id, player); // progress / volume
+      return slider(id, player); // progress
   }
 }
 ```
 
 Native renderers follow the same walk with `Column/Row` (Compose) or
-`VStack/HStack` (SwiftUI), mapping `align` per [§6](#6-alignment-semantics-align),
-and re-resolve the viewport on size-class / configuration changes.
+`VStack/HStack` (SwiftUI), mapping lanes and `fill` per
+[§6](#6-alignment-semantics-lanes--fill), and re-resolve the viewport on
+size-class / configuration changes.
 
 ---
 
 ## 9. Samples
 
-### 9a. One viewport — space-between row (`start` + `end` groups)
+### 9a. One viewport — space-between row (`start` + `end` lanes)
 
 ```json
 {
@@ -645,13 +644,8 @@ and re-resolve the viewport on size-class / configuration changes.
     "center": [],
     "bottom": [
       {
-        "groups": [
-          { "align": "start", "items": ["Chapters"] },
-          {
-            "align": "end",
-            "items": ["Speed", "Quality", "Setting", "FullScreen"]
-          }
-        ]
+        "start": { "items": ["Chapters"] },
+        "end": { "items": ["Speed", "Quality", "Setting", "FullScreen"] }
       }
     ]
   },
@@ -675,12 +669,10 @@ At `≤300`, `Speed` + `Quality` are collapsed into the Setting menu. Note
     "top": [],
     "center": [],
     "bottom": [
-      { "align": "fill", "items": ["VideoProgress"] },
+      { "start": { "items": ["VideoProgress"], "fill": ["VideoProgress"] } },
       {
-        "groups": [
-          { "align": "start", "items": ["PlayNPause"] },
-          { "align": "end", "items": ["Setting", "FullScreen"] }
-        ]
+        "start": { "items": ["PlayNPause"] },
+        "end": { "items": ["Setting", "FullScreen"] }
       }
     ]
   },
@@ -699,7 +691,7 @@ fixture for parser tests:
 
 ```json
 {
-  "schemaVersion": "2.1",
+  "schemaVersion": "3.0",
   "layoutModel": "region",
   "theme": {
     "primary": "#1e90ff",
@@ -720,19 +712,14 @@ fixture for parser tests:
   "viewports": {
     "default": {
       "regions": {
-        "top": [{ "align": "end", "items": ["PictureInPicture"] }],
+        "top": [{ "end": { "items": ["PictureInPicture"] } }],
         "center": [],
         "bottom": [
-          { "align": "start", "items": ["VideoProgress"] },
-          { "align": "start", "items": ["Backward", "PlayNPause", "Forward"] },
+          { "start": { "items": ["VideoProgress"], "fill": ["VideoProgress"] } },
+          { "start": { "items": ["Backward", "PlayNPause", "Forward"] } },
           {
-            "groups": [
-              { "align": "start", "items": ["CUSTOM_time_consumed"] },
-              {
-                "align": "end",
-                "items": ["Speed", "Quality", "Setting", "FullScreen"]
-              }
-            ]
+            "start": { "items": ["CUSTOM_time_consumed"] },
+            "end": { "items": ["Speed", "Quality", "Setting", "FullScreen"] }
           }
         ]
       },
@@ -764,7 +751,7 @@ while keeping its native fullscreen behavior:
 
 ```json
 {
-  "schemaVersion": "2.1",
+  "schemaVersion": "3.0",
   "layoutModel": "region",
   "theme": {
     "primary": "#1e90ff",
@@ -788,12 +775,10 @@ while keeping its native fullscreen behavior:
         "top": [],
         "center": [],
         "bottom": [
-          { "align": "fill", "items": ["VideoProgress"] },
+          { "start": { "items": ["VideoProgress"], "fill": ["VideoProgress"] } },
           {
-            "groups": [
-              { "align": "start", "items": ["PlayNPause"] },
-              { "align": "end", "items": ["CUSTOM_like", "FullScreen"] }
-            ]
+            "start": { "items": ["PlayNPause"] },
+            "end": { "items": ["CUSTOM_like", "FullScreen"] }
           }
         ]
       },
@@ -823,7 +808,7 @@ by their ids; the player renders each from its `textType` (§7c):
 
 ```json
 {
-  "schemaVersion": "2.1",
+  "schemaVersion": "3.0",
   "layoutModel": "region",
   "theme": {
     "primary": "#1e90ff",
@@ -856,12 +841,10 @@ by their ids; the player renders each from its `textType` (§7c):
         "top": [],
         "center": [],
         "bottom": [
-          { "align": "fill", "items": ["VideoProgress"] },
+          { "start": { "items": ["VideoProgress"], "fill": ["VideoProgress"] } },
           {
-            "groups": [
-              { "align": "start", "items": ["CUSTOM_time_all"] },
-              { "align": "end", "items": ["cdt_promoName", "FullScreen"] }
-            ]
+            "start": { "items": ["CUSTOM_time_all"] },
+            "end": { "items": ["cdt_promoName", "FullScreen"] }
           }
         ]
       },
@@ -897,7 +880,7 @@ cases it still handles:
 | Selected viewport has no rows              | fall through to the next wider; `default` is base             |
 | Empty/omitted region                       | render nothing for it (valid)                                 |
 | `collapseInSetting` empty                  | no Setting menu (and `Setting` is absent from bar)            |
-| `controls` block absent (a 2.0 document)   | render every id from the local catalog (no customs/overrides) |
+| `controls` block absent                    | render every id from the local catalog (no customs/overrides) |
 | Declared `icon` name unknown to this build | draw a placeholder glyph (don't fail)                         |
 | `CUSTOM_*` control with no host handler    | render its glyph; activation is a no-op (decorative)          |
 | Text control (`kind: "text"`, `textType`)  | render by `textType` (§7c); it's a passive readout, no behavior |
@@ -918,8 +901,8 @@ fallback above.
 - [ ] Read `playerLayout` from the metadata response; default only if absent.
 - [ ] Apply the global `theme` tokens (colors, gap, sizes).
 - [ ] Resolve the viewport by player width; **re-resolve on resize** (§3).
-- [ ] Normalize both row forms (shorthand + `groups`) to `Group[]`.
-- [ ] Implement the four `align` modes per platform.
+- [ ] Walk each row's lanes `start → center → end` (any may be absent).
+- [ ] Implement the three lane alignments + `fill` items per platform (§6).
 - [ ] Build the `gridIdentifier → {kind, icon, behavior}` registry (all 17).
 - [ ] Parse the optional `controls` block; resolve every item's glyph/kind through it (§7b).
 - [ ] Let a declared `icon` (override or custom) replace the catalog glyph; map the Lucide name to your glyph set (placeholder if unknown).

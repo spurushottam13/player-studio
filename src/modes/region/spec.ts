@@ -1,44 +1,40 @@
-// Region mode native spec (spec.md): schemaVersion 2.1, layoutModel "region".
+// Region mode native spec (spec.md): schemaVersion 3.0, layoutModel "region".
 // Generated directly from the native region state (exact, not derived). `regions`
 // live under per-viewport entries (default | 490 | 300 | 200); each viewport also
 // carries its `collapseInSetting` icon list. Theme is shared across viewports.
 //
-// schemaVersion 2.1 adds a top-level `controls` block: declarations (id, label,
-// kind, Lucide icon name) for any USED control that a stock renderer can't resolve
-// on its own — i.e. custom controls and icon-overridden built-ins. Untouched
-// built-ins stay id-only.
+// schemaVersion 3.0 replaces the ordered `align` group array with a lane-keyed
+// row: `start` | `center` | `end` → { items, fill? }, empty lanes omitted. Fill
+// controls stay inline in their lane's `items` (their position in the sequence
+// is preserved); the lane's `fill` list only flags which of them stretch.
+// The 2.1 `controls` block (declarations for custom / overridden controls) is
+// unchanged.
 
 import type { ControlId } from "../../controls";
 import { isFill, registry } from "../../registry";
 import { LANES, REGION_NAMES, VIEWPORTS } from "./state";
 import type { Lane, RegionState, Row } from "./state";
 
-interface Group {
-  align: Lane | "fill";
+interface LaneGroup {
   items: ControlId[];
+  fill?: ControlId[];
 }
+type SerializedRow = Partial<Record<Lane, LaneGroup>>;
 
-// A row serializes to an array of groups (`Group[]`) — uniform shape regardless
-// of group count, so consumers always iterate without branching.
-function serializeRow(row: Row): Group[] {
-  const groups: Group[] = [];
+// A row serializes lane-keyed. A fill-capable control (slider) is NOT pulled out
+// into its own group: it stays at its position in `items` — that position is the
+// sequence information — and is repeated in `fill`, which carries only the
+// stretch behavior (e.g. start: [Backward, VideoProgress] + end: [Forward]
+// renders Backward — VideoProgress (all remaining width) — Forward).
+function serializeRow(row: Row): SerializedRow {
+  const out: SerializedRow = {};
   for (const lane of LANES) {
-    let run: ControlId[] = [];
-    const flush = () => {
-      if (run.length) groups.push({ align: lane, items: run });
-      run = [];
-    };
-    for (const id of row[lane]) {
-      if (isFill(id)) {
-        flush();
-        groups.push({ align: "fill", items: [id] });
-      } else {
-        run.push(id);
-      }
-    }
-    flush();
+    if (!row[lane].length) continue;
+    const items = [...row[lane]];
+    const fill = items.filter(isFill);
+    out[lane] = { items, ...(fill.length ? { fill } : {}) };
   }
-  return groups;
+  return out;
 }
 
 // Every control id placed anywhere across all viewports (bar + collapse lists).
@@ -92,7 +88,7 @@ export function buildRegionSpec(state: RegionState) {
   }
   const controls = buildControlDecls(collectUsedIds(state));
   return {
-    schemaVersion: "2.1",
+    schemaVersion: "3.0",
     layoutModel: "region" as const,
     theme: { primary: theme.primary, secondary: theme.secondary, iconSize: 22, barHeight: 40, gap: 8 },
     // Omit when empty so default layouts stay byte-for-byte as before.

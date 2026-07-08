@@ -394,6 +394,64 @@ body {
   opacity: 1;
 }
 
+/* ---------- Volume hover slider ---------- */
+/* A 150px slider sliding out of the Volume icon; controlbody.ts picks the side
+   (--left / --right) on each hover based on the space left in the player frame.
+   It's an inline flex child of the control — it takes real row space, so
+   neighbors shift and a fill item (VideoProgress) shrinks instead of being
+   overlapped. Collapsed it is 0×0 (width and padding both 0). */
+.placed-control--volume {
+  position: relative; /* anchors this control's remove × to the control itself */
+}
+.volume-flyout {
+  display: flex;
+  align-items: center;
+  width: 0;
+  height: 22px;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: width 0.18s ease, padding 0.18s ease, opacity 0.18s ease;
+  pointer-events: none;
+}
+.volume-flyout--right {
+  order: 1; /* slider sits after the icon */
+  justify-content: flex-end; /* range hugs the moving edge → slides out */
+}
+.volume-flyout--left {
+  order: -1; /* slider sits before the icon */
+  justify-content: flex-start;
+}
+/* Open on hover, and stay open while the thumb is held (`is-sliding`) even if
+   the pointer wanders off the chip mid-drag. */
+.placed-control--volume:hover .volume-flyout,
+.placed-control--volume.is-sliding .volume-flyout {
+  /* --fly-w is set per hover: 150px capped to the row's actual slack. */
+  width: var(--fly-w, 150px);
+  opacity: 1;
+  /* Hit-testable while open so moving onto the flyout keeps the parent :hover. */
+  pointer-events: auto;
+}
+.placed-control--volume:hover .volume-flyout--right,
+.placed-control--volume.is-sliding .volume-flyout--right {
+  padding: 0 8px 0 6px; /* inner 6px doubles as the icon↔slider gap */
+}
+.placed-control--volume:hover .volume-flyout--left,
+.placed-control--volume.is-sliding .volume-flyout--left {
+  padding: 0 6px 0 8px;
+}
+.volume-flyout .control-range {
+  width: calc(var(--fly-w, 150px) - 14px); /* flyout minus its padding; fixed so it never squishes mid-slide */
+  flex: none;
+  /* Unlike the other (decorative) preview sliders, this one is draggable. */
+  pointer-events: auto;
+  cursor: pointer;
+}
+/* Never shift the layout under a drag in progress. */
+body.dnd-active .volume-flyout {
+  display: none;
+}
+
 /* =====================================================================
    GRID MODE
    ===================================================================== */

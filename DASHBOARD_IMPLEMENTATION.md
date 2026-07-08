@@ -11,8 +11,9 @@ This doc generalizes the working POC in [`src/modes/region/`](./src/modes/region
 (editor, state, spec), [`src/dnd.ts`](./src/dnd.ts), and
 [`src/ui/palette.ts`](./src/ui/palette.ts).
 
-> **Schema:** the dashboard emits **`schemaVersion` 2.1** — per-**viewport**
-> layouts (`default | 490 | 300 | 200`), each with its own `collapseInSetting`
+> **Schema:** the dashboard emits **`schemaVersion` 3.0** — per-**viewport**
+> layouts (`default | 490 | 300 | 200`) of lane-keyed rows, each viewport with
+> its own `collapseInSetting`
 > list, under one shared `theme`, plus an optional top-level **`controls`** block
 > declaring **custom controls**, **text controls**, and **icon overrides**
 > ([§2b](#2b-the-control-registry-built-ins--custom--overrides) / [§5](#5-serializer--internal-model--output-json)).
@@ -58,8 +59,8 @@ Pieces:
 ## 2. The authoring model (state ≠ output)
 
 The dashboard keeps an **edit-friendly** internal model and _derives_ the output
-JSON from it. Don't author directly against the wire format — lanes are far
-easier to drag into than the `groups`/`align` output shape.
+JSON from it. Don't author directly against the wire format — the internal lanes
+carry editor state the wire's lane-keyed rows don't need.
 
 ### Internal model
 
@@ -100,9 +101,9 @@ interface Theme {
 - The layout stores only **ids**; what each id _is_ (label, kind, icon, custom?)
   lives in the **control registry** (§2b), persisted separately.
 
-> Why lanes instead of groups? A lane is a fixed, always-present drop target, so
-> the user can drop into "the right edge of row 2" directly. The serializer
-> collapses lanes back into the `align`/`groups` output (§5).
+> Why lanes? A lane is a fixed, always-present drop target, so the user can drop
+> into "the right edge of row 2" directly. The serializer emits the same lanes on
+> the wire, minus empty ones (§5).
 
 ### A control's identity: the control id
 
@@ -381,40 +382,34 @@ bar **and** straight from the palette.
 
 ## 5. Serializer — internal model → output JSON
 
-The serializer turns each viewport's lanes back into `align` + `groups`, and
-emits its collapse list as `collapseInSetting`. (POC reference:
+The serializer emits each viewport's lanes directly — a row is an object keyed
+by lane — and emits its collapse list as `collapseInSetting`. (POC reference:
 [`src/modes/region/spec.ts`](./src/modes/region/spec.ts).)
 
 ### Per-row rule
 
-Walk lanes `start → center → end`. A contiguous run of non-`fill` controls becomes
-one group with that lane's `align`. A `fill` control (a slider — `VideoProgress` /
-`Volume`) breaks the run into its own `align: "fill"` group. A single-group row
-collapses to the shorthand form.
+Walk lanes `start → center → end`; skip empty ones. Each non-empty lane becomes
+`{ items }` with its ids in order. A `fill` control (a slider — only
+`VideoProgress`) is **not** pulled out of the sequence: it stays at its position in
+`items` and is repeated in the lane's optional `fill` list, which carries only
+the stretch behavior.
 
 ```ts
-interface Group {
-  align: Lane | "fill";
+interface LaneGroup {
   items: ControlId[];
+  fill?: ControlId[]; // subset of items that stretch; omitted when none
 }
+type SerializedRow = Partial<Record<Lane, LaneGroup>>;
 
-function serializeRow(row: Row): Group | { groups: Group[] } {
-  const groups: Group[] = [];
+function serializeRow(row: Row): SerializedRow {
+  const out: SerializedRow = {};
   for (const lane of ["start", "center", "end"] as const) {
-    let run: ControlId[] = [];
-    const flush = () => {
-      if (run.length) groups.push({ align: lane, items: run });
-      run = [];
-    };
-    for (const id of row[lane]) {
-      if (isFill(id)) {
-        flush();
-        groups.push({ align: "fill", items: [id] });
-      } else run.push(id);
-    }
-    flush();
+    if (!row[lane].length) continue;
+    const items = [...row[lane]];
+    const fill = items.filter(isFill);
+    out[lane] = { items, ...(fill.length ? { fill } : {}) };
   }
-  return groups.length === 1 ? groups[0] : { groups }; // shorthand when single group
+  return out;
 }
 ```
 
@@ -486,7 +481,7 @@ function buildRegionSpec(state: RegionState) {
   }
   const controls = buildControlDecls(state);
   return {
-    schemaVersion: "2.1",
+    schemaVersion: "3.0",
     layoutModel: "region",
     theme: {
       primary: theme.primary,
@@ -725,7 +720,7 @@ addTextBtn.onclick = async () => {
 - [ ] Delete a custom control → `state.purge(id)` across all viewports + drop ghost
       ids on load (§3).
 - [ ] `serializeRow` + `buildControlDecls` + `buildRegionSpec` over all four
-      viewports → `schemaVersion` 2.1, `controls` omitted when empty, text controls
+      viewports → `schemaVersion` 3.0, `controls` omitted when empty, text controls
       emit `textType` + extras (§5).
 - [ ] `state.subscribe` → `console.log(JSON)` / code panel (swap for API later).
 - [ ] Verify output validates against `player.schema.json` and round-trips through

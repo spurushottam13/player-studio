@@ -41,7 +41,7 @@ export type ControlId = BuiltinId | (string & {});
 
 // icon   — a single Lucide glyph (most controls)
 // text   — a HH:MM style readout (the Time controls)
-// slider — a horizontal range that fills available width (progress / volume)
+// slider — a horizontal range that fills available width (VideoProgress only)
 export type ControlKind = "icon" | "text" | "slider";
 
 // The flavours of user-addable TEXT control (the "+ Add text" flow). The four
@@ -92,9 +92,9 @@ export const BUILTINS: readonly ControlDef[] = [
   { id: "SaveVideoOffline", label: "SaveVideoOffline", icon: "Download", kind: "icon", defaultSpan: 1, maxSpan: 1 },
   { id: "Setting", label: "Setting", icon: "Settings", kind: "icon", defaultSpan: 1, maxSpan: 1 },
   { id: "Speed", label: "Speed", icon: "Timer", kind: "icon", defaultSpan: 1, maxSpan: 1 },
-  // Sliders — render at flex width; export with align "fill" (region) / fraction (free).
+  { id: "Volume", label: "Volume", icon: "Volume2", kind: "icon", defaultSpan: 1, maxSpan: 1 },
+  // Slider — renders at flex width; region export flags it in the lane's `fill` list.
   { id: "VideoProgress", label: "VideoProgress", icon: "SlidersHorizontal", kind: "slider", defaultSpan: 5, maxSpan: INF },
-  { id: "Volume", label: "Volume", icon: "Volume2", kind: "slider", defaultSpan: 3, maxSpan: INF },
 ] as const;
 
 export const BUILTIN_BY_ID: ReadonlyMap<ControlId, ControlDef> = new Map(

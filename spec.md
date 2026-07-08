@@ -53,29 +53,35 @@ bottom:
 | `bottom` | Control bar: progress, transport buttons, time, controls |
 
 Each region holds an **ordered list of rows** (stacked vertically). Each **row**
-holds one or more **groups**. Each **group** has an `align` and an ordered list
-of **items** (control ids).
+is an object keyed by **lane** — `start` | `center` | `end`, laid out in that
+order, empty lanes omitted. Each lane holds an ordered list of **items**
+(control ids) plus an optional **`fill`** list flagging which of those items
+stretch.
 
 ```
 region
 └── row (stacked vertically)
-    └── group (laid out horizontally)
-        ├── align: start | center | end | fill
-        └── items: [ "PlayNPause", "Forward", ... ]   ← ordered, left → right
+    └── lane: start | center | end   ← laid out horizontally, in that order
+        ├── items: [ "PlayNPause", "Forward", ... ]   ← ordered, left → right
+        └── fill:  [ "VideoProgress" ]                ← optional, subset of items
 ```
 
 ### Alignment semantics
 
-| `align`  | Behavior                                                       |
+| lane     | Behavior                                                       |
 | -------- | -------------------------------------------------------------- |
 | `start`  | Packed against the leading (left) edge                         |
 | `center` | Centered within the row                                        |
 | `end`    | Packed against the trailing (right) edge                       |
-| `fill`   | Expands to consume all remaining horizontal space in the row   |
 
-A row with `start` + `end` groups behaves like *space-between*. A row containing
-a `fill` group (e.g. `VideoProgress`) lets that control absorb the slack instead
-of an empty spacer.
+A row with `start` + `end` lanes behaves like *space-between*. A **fill** item
+(a slider — only `VideoProgress`) expands to consume all remaining
+horizontal space in the row **from its own position in `items`**: the item stays
+inline in the sequence, so no ordering information is lost — `fill` carries only
+the stretch behavior. E.g. `start: { items: ["Backward", "VideoProgress"],
+fill: ["VideoProgress"] }` + `end: { items: ["Forward"] }` renders
+Backward — VideoProgress (all remaining width) — Forward, instead of needing an
+empty spacer.
 
 ---
 
@@ -83,7 +89,7 @@ of an empty spacer.
 
 ```jsonc
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "3.0",
   "theme": {
     "primary":   "#1e90ff",   // progress / active accents
     "secondary": "#ffffff",   // icons / text
@@ -99,22 +105,19 @@ of an empty spacer.
 }
 ```
 
-A **Row** is either the shorthand single-group form:
-
-```jsonc
-{ "align": "fill", "items": ["VideoProgress"] }
-```
-
-or the multi-group form:
+A **Row** is an object keyed by lane; each lane has `items` and, when any of
+them stretch, a `fill` list:
 
 ```jsonc
 {
-  "groups": [
-    { "align": "start", "items": ["Backward", "PlayNPause", "Forward"] },
-    { "align": "end",   "items": ["Speed", "Quality", "FullScreen"] }
-  ]
+  "start": { "items": ["Backward", "VideoProgress"], "fill": ["VideoProgress"] },
+  "end":   { "items": ["Forward"] }
 }
 ```
+
+Empty lanes are omitted, and `fill` is omitted when nothing in that lane
+stretches. `fill` is always a subset of the same lane's `items` — position comes
+from `items`, `fill` only marks the stretch.
 
 A region may be omitted or be an empty array if it has no controls.
 
@@ -126,25 +129,23 @@ The current default layout, expressed in this model:
 
 ```json
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "3.0",
   "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8 },
   "regions": {
     "top": [
-      { "align": "end", "items": ["PictureInPicture"] }
+      { "end": { "items": ["PictureInPicture"] } }
     ],
     "center": [],
     "bottom": [
       {
-        "groups": [
-          { "align": "start", "items": ["Backward", "PlayNPause", "Forward"] },
-          { "align": "fill",  "items": ["VideoProgress"] }
-        ]
+        "start": {
+          "items": ["Backward", "PlayNPause", "Forward", "VideoProgress"],
+          "fill": ["VideoProgress"]
+        }
       },
       {
-        "groups": [
-          { "align": "start", "items": ["TimeAll"] },
-          { "align": "end",   "items": ["Speed", "Quality", "Setting", "FullScreen"] }
-        ]
+        "start": { "items": ["TimeAll"] },
+        "end":   { "items": ["Speed", "Quality", "Setting", "FullScreen"] }
       }
     ]
   }
@@ -181,7 +182,7 @@ flag needed).
 | 18 | `TimeDuration`     | text   | `HH:MM`                        |
 | 19 | `TimeAll`          | text   | `HH:MM / HH:MM`                |
 | 20 | `VideoProgress`    | slider | typically `fill`               |
-| 21 | `Volume`           | slider | `fill`-capable                 |
+| 21 | `Volume`           | icon   | hover reveals a 150px slider flying out toward the side with room |
 
 ### Control kinds → rendering
 
@@ -214,7 +215,7 @@ information, both via an optional top-level **`controls`** object keyed by id
 
 ```jsonc
 {
-  "schemaVersion": "2.1",
+  "schemaVersion": "3.0",
   // …theme / viewports…
   "controls": {
     "CUSTOM_like": {                 // custom control — full declaration
@@ -249,10 +250,10 @@ engine:
 | ------------------ | ---------------------------- | ---------------------------- | ------------------------------- |
 | region stack       | `flex-direction: column`     | `Column`                     | `VStack`                        |
 | row                | `display: flex`              | `Row`                        | `HStack`                        |
-| group `start`      | default order                | leading children             | leading                         |
-| group `center`     | `margin: auto` / centered    | `Arrangement.Center`         | `Spacer()` both sides           |
-| group `end`        | `margin-left: auto`          | `Spacer()` before            | `Spacer()` before               |
-| group `fill`       | `flex: 1`                    | `Modifier.weight(1f)`        | `.frame(maxWidth: .infinity)`   |
+| lane `start`       | default order                | leading children             | leading                         |
+| lane `center`      | `margin: auto` / centered    | `Arrangement.Center`         | `Spacer()` both sides           |
+| lane `end`         | `margin-left: auto`          | `Spacer()` before            | `Spacer()` before               |
+| `fill` item        | `flex: 1`                    | `Modifier.weight(1f)`        | `.frame(maxWidth: .infinity)`   |
 | item gap           | `gap`                        | `Arrangement.spacedBy(gap)`  | `HStack(spacing: gap)`          |
 
 UIKit / Android View equivalents: `UIStackView` and `LinearLayout` with weights
