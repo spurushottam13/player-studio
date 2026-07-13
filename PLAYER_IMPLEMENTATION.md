@@ -346,7 +346,7 @@ simply not rendered (no explicit "hidden" flag).
 | 14  | `Setting`          | icon   | menu container — auto-managed (see [§4](#4-collapse-in-setting)) |
 | 15  | `Speed`            | icon   |                                                                  |
 | 16  | `VideoProgress`    | slider | typically `fill`                                                 |
-| 17  | `Volume`           | icon   | hover/press reveals a 150px slider toward the side with room     |
+| 17  | `Volume`           | icon   | on-demand hover slider — see [§7a](#7a-volume--the-hover-slider) |
 
 > **All time built-ins were removed** (`TimeConsumed` / `TimeLeft` / `TimeDuration`
 > / `TimeAll`). They — plus Current Chapter, Dynamic Text, and Title — are now
@@ -389,7 +389,7 @@ const REGISTRY: Record<ControlId, ControlEntry> = {   // 17 built-ins; host may 
   Forward:    { kind: "icon", icon: FwdIcon,  onActivate: (p) => p.seek(+10) },
   Setting:    { kind: "icon", icon: GearIcon, onActivate: (p) => p.toggleSettingMenu() },
   VideoProgress: { kind: "slider", onActivate: /* seek to ratio */ },
-  Volume:     { kind: "icon", icon: VolumeIcon, onActivate: /* toggle mute / volume UI */ },
+  Volume:     { kind: "icon", icon: VolumeIcon, onActivate: /* toggle mute */ }, // + hover slider — §7a
   // …all 17 (time readouts are now text controls — see §7c)…
 };
 ```
@@ -399,6 +399,29 @@ const REGISTRY: Record<ControlId, ControlEntry> = {   // 17 built-ins; host may 
 > equivalents) for parity. **Custom controls and icon overrides** _do_ ship a
 > Lucide icon **name** (a string, never raw SVG) in the `controls` block; map that
 > name to your platform's glyph set ([§7b](#7b-custom-controls--icon-overrides-the-controls-block)).
+
+---
+
+## 7a. `Volume` — the hover slider
+
+`Volume` sits on the bar as a plain icon; its slider appears **on demand**. None
+of this is in the JSON — like all behavior it is implemented per platform,
+keyed by the id:
+
+- **Trigger:** pointer hover on the icon (desktop); press/tap on touch.
+- **Inline, not overlay.** The slider takes **real row space** next to the icon:
+  neighbors shift over and a `fill` item (`VideoProgress`) absorbs the change by
+  shrinking. Never draw it on top of other controls.
+- **Side:** open toward the side of the player with room — the icon's side of
+  the frame with ≥ 150px free, else whichever side has more. Re-measure on
+  every reveal; the answer changes with viewport and layout.
+- **Width:** **150px**, capped to what the row can actually free up (free row
+  space plus what the fill slider can shrink, down to its minimum), with a
+  floor of ~60px so the thumb stays usable on narrow bars.
+- **Lifecycle:** collapses when the pointer leaves the icon + slider; while the
+  thumb is **held**, stays open even if the pointer strays off the row.
+- **Look:** no pill/backdrop behind it — the bare range on the bar, thumb/track
+  accented with `theme.primary` like `VideoProgress`.
 
 ---
 
@@ -909,9 +932,6 @@ fallback above.
 - [ ] Render `CUSTOM_*` controls from their declaration; bind behavior only when the host registered a handler for the id.
 - [ ] Render `kind: "text"` controls by their `textType` (time / chapter / dynamic / title); wire `dynamicText` to the host's `cdt_*` variables (§7c).
 - [ ] Render `Setting` as the menu container; populate it from `collapseInSetting` (§4).
+- [ ] `Volume`: icon with the on-demand inline slider — side + width measured per reveal, pushes (never overlaps) neighbors, pinned open while dragging (§7a).
 - [ ] Bind built-in behavior by id; never read behavior from JSON.
 - [ ] Test against the golden fixtures in [§9c](#9c-full-document-the-canonical-fixture), [§9d](#9d-with-a-custom-control--an-icon-override), and the text controls in [§9e](#9e-with-text-controls-time-all--dynamic-text).
-
-```
-
-```

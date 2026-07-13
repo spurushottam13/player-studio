@@ -536,6 +536,29 @@ branch draws `renderIcon(registry.iconOf(id))`, so overrides and custom glyphs s
 live. The canvas re-renders on **registry** changes too (not just layout), so an
 icon swap updates an already-placed control immediately.
 
+**Volume hover-slider preview.** A placed `Volume` chip previews the player's
+on-demand slider ([`PLAYER_IMPLEMENTATION.md` §7a](./PLAYER_IMPLEMENTATION.md#7a-volume--the-hover-slider);
+POC: [`src/ui/controlbody.ts`](./src/ui/controlbody.ts) `appendVolumeFlyout`).
+Hovering the icon slides out an **inline** range (no backdrop) as a flex child
+of the chip — it takes real row space, so neighbors shift and a fill
+`VideoProgress` shrinks instead of being overlapped. Each `pointerenter`
+re-measures and sets:
+
+- the **side** — `volume-flyout--left` / `--right` (flex `order` puts the range
+  before or after the icon), toward the player edge with ≥150px, else the
+  roomier one;
+- the **width** — `--fly-w`: 150px capped to the row's slack (free space + what
+  the fill slider can give up down to its 60px min), floor 60px.
+
+It is the **one interactive slider** on the canvas (the others are decorative,
+`pointer-events: none`). Holding its thumb suspends the chip's HTML5 drag
+(`draggable="false"` until the next `pointerup`) so a slider gesture never
+becomes a chip drag, and pins the flyout open via an `is-sliding` class so it
+survives the pointer straying off the row mid-drag. During DnD
+(`body.dnd-active`) the flyout is hidden entirely so it never shifts the layout
+under a drag or blocks a drop target. The value isn't persisted — it resets on
+re-render.
+
 ### 6b. Viewport switcher
 
 A segmented control above the player. Switching swaps the active design **and
@@ -714,6 +737,8 @@ addTextBtn.onclick = async () => {
       variable / show-number input per flavour (§6f).
 - [ ] Canvas: regions → gaps + rows → 3 lanes with `data-drop`; lane/gap drops;
       icons via `registry.iconOf`; re-render on registry changes (§6a).
+- [ ] Volume hover-slider preview: inline flyout with per-hover side + width,
+      interactive thumb that suspends the chip drag, hidden during DnD (§6a).
 - [ ] Viewport switcher: `setViewport` + resize the preview (§6b).
 - [ ] Collapse bin in the left palette: `makeCollapseTarget` + collapsed chips +
       `stopPropagation` vs the remove target (§6c).
@@ -727,7 +752,3 @@ addTextBtn.onclick = async () => {
       the player ([`PLAYER_IMPLEMENTATION.md` §9c](./PLAYER_IMPLEMENTATION.md#9c-full-document-the-canonical-fixture)),
       including a custom control + override ([§9d](./PLAYER_IMPLEMENTATION.md#9d-with-a-custom-control--an-icon-override))
       and text controls ([§9e](./PLAYER_IMPLEMENTATION.md#9e-with-text-controls-time-all--dynamic-text)).
-
-```
-
-```
