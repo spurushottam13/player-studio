@@ -32,6 +32,21 @@ export interface EditorInstance {
 export interface Theme {
   primary: string;
   secondary: string;
+  // Shared across ALL background elements (there is no per-background color) —
+  // edited via the one "Background" tool in the stage toolbar.
+  bgColor: string;
+  bgOpacity: number; // 0–1
+  // Padding of the whole .Player container (px), edited via the toolbar's
+  // "Padding" tool. Global across the layout.
+  playerPadX: number;
+  playerPadY: number;
 }
 
-export const DEFAULT_THEME: Theme = { primary: "#1e90ff", secondary: "#ffffff" };
+export const DEFAULT_THEME: Theme = {
+  primary: "#1e90ff",
+  secondary: "#ffffff",
+  bgColor: "#000000",
+  bgOpacity: 0.5,
+  playerPadX: 9,
+  playerPadY: 4,
+};

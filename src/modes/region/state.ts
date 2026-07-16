@@ -7,7 +7,7 @@
 // viewport's collapse list (see reconcileSetting). See spec.md.
 
 import type { ControlId } from "../../controls";
-import { DEFAULT_TIME_CONTROL_ID, registry } from "../../registry";
+import { DEFAULT_CONTROL_IDS, registry } from "../../registry";
 import { DEFAULT_THEME } from "../types";
 import type { Theme } from "../types";
 
@@ -62,24 +62,33 @@ function emptyLayouts(): Layouts {
   return { default: emptyLayout(), "490": emptyLayout(), "300": emptyLayout(), "200": emptyLayout() };
 }
 function defaultRegions(): Regions {
+  const D = DEFAULT_CONTROL_IDS;
   return {
-    top: [emptyRow({ end: ["PictureInPicture"] })],
-    center: [],
-    bottom: [
-      emptyRow({ start: ["VideoProgress"] }),
-      emptyRow({ start: ["Backward", "PlayNPause", "Forward"] }),
+    top: [
       emptyRow({
-        start: [DEFAULT_TIME_CONTROL_ID],
-        end: ["Speed", "Quality", "Setting", "FullScreen"],
+        start: [D.bgTopLeft, "Cast", "AirPlay"],
+        end: ["PictureInPicture", D.bgTopRight, "FullScreen"],
+      }),
+    ],
+    center: [
+      emptyRow({
+        start: [D.spacerLeft, "Backward"],
+        center: ["PlayNPause"],
+        end: ["Forward", D.spacerRight],
+      }),
+    ],
+    bottom: [
+      emptyRow({
+        center: ["Volume", "VideoProgress", D.bgBottom, D.timeLeft, "Captions", "Setting"],
       }),
     ],
   };
 }
-// Reset seeds only the default viewport with the canonical layout; narrow
-// viewports start blank (authored from scratch — see plan).
+// Reset seeds only the default viewport with the canonical layout (Speed +
+// CaptionSearch folded into Setting); narrow viewports start blank.
 function defaultLayouts(): Layouts {
   const l = emptyLayouts();
-  l.default = { regions: defaultRegions(), collapse: [] };
+  l.default = { regions: defaultRegions(), collapse: ["Speed", "CaptionSearch"] };
   return l;
 }
 const clamp = (v: number, min: number, max: number) =>
@@ -321,16 +330,46 @@ export class RegionState {
       const active = parsed.active as Viewport | undefined;
       if (active && VIEWPORTS.includes(active)) this.activeViewport = active;
       const theme = parsed.theme as Partial<Theme> | undefined;
-      if (theme) {
-        this.theme = {
-          primary: theme.primary ?? DEFAULT_THEME.primary,
-          secondary: theme.secondary ?? DEFAULT_THEME.secondary,
-        };
-      }
+      if (theme) this.theme = mergeTheme(theme);
     } catch {
       this.layouts = defaultLayouts();
     }
   }
+
+  // ---- Undo/redo snapshots (see history.ts) ------------------------------
+  // The full persisted shape as a string; restore() rehydrates it and notifies,
+  // driving a re-render. Restoring goes through the same sanitize path as load
+  // so a snapshot is always self-consistent.
+  snapshot(): string {
+    return JSON.stringify({ layouts: this.layouts, theme: this.theme, active: this.activeViewport });
+  }
+  restore(snapshot: string): void {
+    try {
+      const parsed = JSON.parse(snapshot) as Record<string, unknown>;
+      this.layouts = sanitizeLayouts(parsed);
+      const active = parsed.active as Viewport | undefined;
+      if (active && VIEWPORTS.includes(active)) this.activeViewport = active;
+      this.theme = mergeTheme(parsed.theme as Partial<Theme> | undefined);
+    } catch {
+      /* ignore a corrupt snapshot */
+    }
+    this.save();
+    for (const fn of this.listeners) fn();
+  }
+}
+
+// Fill a persisted (possibly partial / legacy) theme with defaults for any
+// missing field, so new theme keys (bg color/opacity, player padding) degrade
+// gracefully on old saves.
+function mergeTheme(theme: Partial<Theme> | undefined): Theme {
+  return {
+    primary: theme?.primary ?? DEFAULT_THEME.primary,
+    secondary: theme?.secondary ?? DEFAULT_THEME.secondary,
+    bgColor: theme?.bgColor ?? DEFAULT_THEME.bgColor,
+    bgOpacity: typeof theme?.bgOpacity === "number" ? theme.bgOpacity : DEFAULT_THEME.bgOpacity,
+    playerPadX: typeof theme?.playerPadX === "number" ? theme.playerPadX : DEFAULT_THEME.playerPadX,
+    playerPadY: typeof theme?.playerPadY === "number" ? theme.playerPadY : DEFAULT_THEME.playerPadY,
+  };
 }
 
 // Accept both the new `{ layouts }` shape and the legacy `{ regions }` shape

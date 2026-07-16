@@ -1,75 +1,64 @@
 # Player Implementation — Regional Layout
 
-How the **player** consumes the Regional Layout JSON delivered in the metadata
-API and renders the control bar from it. This is the consumer side of the
-contract defined in [`spec.md`](./spec.md). The authoring side (dashboard) is in
+How the **player** consumes the Regional Layout JSON delivered in the metadata API
+and renders the control bar from it. This is the consumer side of the contract
+defined in [`spec.md`](./spec.md). The authoring side (dashboard) is in
 [`DASHBOARD_IMPLEMENTATION.md`](./DASHBOARD_IMPLEMENTATION.md).
 
 > **Scope:** layout + style only. _Behavior_ (what `PlayNPause` does) is wired
 > natively per platform, keyed by the control's `gridIdentifier`. The JSON never
 > carries behavior — see [§7](#7-controls-grididentifier).
 
-> **Schema:** this document describes **`schemaVersion` 3.0**: per-**viewport**
-> entries, **collapse-in-Setting**, an optional top-level **`controls`** block
-> carrying **custom controls**, **text controls**, and **icon overrides** (see
-> [§7b](#7b-custom-controls--icon-overrides-the-controls-block)
-> / [§7c](#7c-text-controls-the-controls-block)), and **lane-keyed rows** —
-> 3.0 replaces 2.x's ordered `align` group arrays with rows keyed by
-> `start` | `center` | `end` ([§5](#5-row-shape-lane-keyed)); fill controls stay
-> inline in `items` and are flagged in a per-lane `fill` list. The flat 1.0 shape
-> (single `regions` block, no viewports) is superseded.
+> **Schema:** this document describes **`schemaVersion` "3.1"** — the single
+> current version. Per-**viewport** entries (`default | 490 | 300 | 200`),
+> **collapse-in-Setting**, one shared **`theme`** (colors, sizes, shared background
+> color/opacity, player-container padding), **lane-keyed rows** (`start | center |
+> end`; fill items flagged in a per-lane `fill` list), and an optional top-level
+> **`controls`** block declaring custom controls, text/spacer/background elements,
+> icon overrides, and per-icon appearance (`size`, `background`) — see
+> [§7b](#7b-the-controls-block).
 
-> **Time readouts changed:** **all** time readouts — `TimeConsumed`, `TimeLeft`,
-> `TimeDuration`, `TimeAll` — are **no longer reserved built-ins**. They are authored
-> as **text controls** and ship a full declaration in the `controls` block
-> ([§7c](#7c-text-controls-the-controls-block)); the authoring tool's default layout
-> ships a seeded `TimeConsumed` text control (id `CUSTOM_time_consumed`). The reserved
-> catalog is now **17** ids ([§7](#7-controls-grididentifier)).
+> **17 reserved built-ins.** All time readouts and three text elements are **text
+> controls** in the `controls` block ([§7c](#7c-text-controls)); the two
+> blank/decorative elements are **spacers** and **lane backgrounds**
+> ([§7d](#7d-spacers--backgrounds)). A **per-icon background** (a circle/badge behind
+> one glyph) rides on an icon's declaration ([§7d](#7d-spacers--backgrounds)).
 
 ---
 
 ## 1. Where the layout comes from
 
-The Regional Layout JSON is embedded in the **metadata API** response that the
-player already fetches at init, under a `playerLayout` (or equivalently named)
-key:
+The Regional Layout JSON is embedded in the **metadata API** response the player
+already fetches at init, under a `playerLayout` key:
 
 ```jsonc
-// GET /api/meta/{videoId}  (existing metadata call)
+// GET /api/meta/{videoId}
 {
   "videoId": "abc123",
   "duration": 612.4,
-  "title": "...",
   // ...existing fields...
   "playerLayout": {
-    "schemaVersion": "3.0",
+    "schemaVersion": "3.1",
     "layoutModel": "region",
-    "theme": {
-      /* shared across viewports */
-    },
-    "controls": {
-      /* OPTIONAL: custom controls, text controls + icon overrides — see §7b / §7c */
-    },
-    "viewports": {
-      /* default | 490 | 300 | 200 */
-    },
-  },
+    "theme": { /* shared across viewports */ },
+    "controls": { /* OPTIONAL — see §7b */ },
+    "viewports": { /* default | 490 | 300 | 200 */ }
+  }
 }
 ```
 
 Player init flow:
 
 ```
-fetch metadata ──► read playerLayout ──► pick viewport (by width) ──► build bar ──► attach behavior
-                              │                                          │              │
-                  (read `controls` decls)              (resolve icon via `controls`)  (bind by gridIdentifier)
+fetch metadata ─► read playerLayout ─► pick viewport (by width) ─► apply theme ─► build bar ─► attach behavior
+                        │                                              │             │            │
+              (read `controls` decls)                 (container padding)  (resolve id via `controls`)  (bind by gridIdentifier)
 ```
 
 The server is the source of truth and always sends a correct, current-version
-`region` layout — the player does **not** version-gate or validate the schema.
-The only fallback is when `playerLayout` is entirely **absent** from the metadata
-(e.g. an older video with no layout configured): use the player's built-in
-default layout. Otherwise render the layout as received.
+`region` layout — the player does **not** version-gate or validate the schema. The
+only fallback is when `playerLayout` is entirely **absent** (an older video with no
+layout): use the player's built-in default. Otherwise render as received.
 
 ---
 
@@ -77,101 +66,52 @@ default layout. Otherwise render the layout as received.
 
 ```jsonc
 {
-  "schemaVersion": "3.0",
+  "schemaVersion": "3.1",
   "layoutModel": "region", // always "region"
   "theme": {
     // ONE theme, shared by every viewport
-    "primary": "#1e90ff", // progress fill / active accents
-    "secondary": "#ffffff", // icon + text color
-    "iconSize": 22, // density-independent (px / dp / pt)
+    "primary": "#1e90ff",        // progress fill / active accents
+    "secondary": "#ffffff",      // icon + text color
+    "iconSize": 22,              // default icon size (px/dp/pt); a control's `size` overrides it
     "barHeight": 40,
-    "gap": 8, // spacing between items inside a lane
+    "gap": 8,                    // spacing between items INSIDE a lane
+    "backgroundColor": "#000000",// shared fill for EVERY background (lane + per-icon)
+    "backgroundOpacity": 0.5,    // 0–1, shared
+    "paddingX": 9,               // .Player container padding, left+right
+    "paddingY": 4                // top+bottom
   },
   "controls": {
-    // OPTIONAL — declarations for custom controls
-    "CUSTOM_like": {
-      "custom": true,
-      "kind": "icon",
-      "label": "Like",
-      "icon": "Heart",
-    },
-    "FullScreen": { "icon": "Maximize2" }, // and icon overrides — see §7b
+    // OPTIONAL — declarations the local catalog can't supply — see §7b
+    "PlayNPause": { "icon": "Play", "size": 48, "background": { "padding": 10, "radius": 40 } },
+    "CUSTOM_spacer": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "RectangleHorizontal", "width": 200 }
   },
   "viewports": {
-    "default": {
-      "regions": {
-        /* ... */
-      },
-      "collapseInSetting": [
-        /* ids */
-      ],
-    },
-    "490": {
-      "regions": {
-        /* ... */
-      },
-      "collapseInSetting": [
-        /* ids */
-      ],
-    },
-    "300": {
-      "regions": {
-        /* ... */
-      },
-      "collapseInSetting": [
-        /* ids */
-      ],
-    },
-    "200": {
-      "regions": {
-        /* ... */
-      },
-      "collapseInSetting": [
-        /* ids */
-      ],
-    },
-  },
-}
-```
-
-Each **viewport** is a self-contained design:
-
-```jsonc
-{
-  "regions": {
-    "top": [
-      /* Row[] */
-    ], // top bar      (PiP, Cast, Settings…)
-    "center": [
-      /* Row[] */
-    ], // center overlay (big Play, Back/Fwd…)
-    "bottom": [
-      /* Row[] */
-    ], // control bar  (progress, transport, time…)
-  },
-  "collapseInSetting": ["Quality", "Speed"], // icons folded into the Setting menu
+    "default": { "regions": { /* ... */ }, "collapseInSetting": [ /* ids */ ] },
+    "490":     { "regions": { /* ... */ }, "collapseInSetting": [] },
+    "300":     { "regions": { /* ... */ }, "collapseInSetting": [] },
+    "200":     { "regions": { /* ... */ }, "collapseInSetting": [] }
+  }
 }
 ```
 
 ### The model in one line
 
 ```
-viewports → regions → rows (stacked) → lanes (start | center | end) → items (gridIdentifiers, ordered L→R)
+viewports → regions → rows (stacked) → lanes (start | center | end) → items (ids, ordered L→R)
                                                                     + collapseInSetting (icons in the Setting menu)
 ```
 
-- **`theme`** is global (one set of tokens for all viewports).
-- **`controls`** (optional, global) declares **custom controls**, **text controls**,
-  and **icon overrides** used anywhere in the document — see
-  [§7b](#7b-custom-controls--icon-overrides-the-controls-block) /
-  [§7c](#7c-text-controls-the-controls-block).
-- Each **viewport** has its own `regions` **and** its own `collapseInSetting` list.
+- **`theme`** is global. `backgroundColor` / `backgroundOpacity` apply to every
+  background element (lane backgrounds **and** per-icon backgrounds). `paddingX` /
+  `paddingY` are the inner padding of the whole player container. `iconSize` is the
+  default; a control may override it with its own `size` (§7b).
+- **`controls`** (optional, global) declares custom controls, text/spacer/background
+  elements, icon overrides, and per-icon `size` / `background` — §7b.
+- Each **viewport** has its own `regions` **and** `collapseInSetting`.
 - A **region** is an ordered array of **rows**, stacked top→bottom.
-- A **row** is an object keyed by **lane** (`start` | `center` | `end`), laid
-  out horizontally in that order; empty lanes are omitted.
-- A **lane** has an ordered list of control ids (`items`) and an optional
-  `fill` list flagging which of those items stretch ([§5](#5-row-shape-lane-keyed)).
-- A region may be omitted or `[]` when it has no controls.
+- A **row** is an object keyed by **lane** (`start | center | end`); empty lanes are
+  omitted. A **lane** has ordered `items` and an optional `fill` list.
+- A region may be omitted or `[]` when empty.
 
 ---
 
@@ -185,85 +125,54 @@ player_, not the device screen:
 | `200`     | ≤ 200 px                      |
 | `300`     | ≤ 300 px                      |
 | `490`     | ≤ 490 px                      |
-| `default` | anything wider (desktop base) |
+| `default` | anything wider (base)         |
 
-### Selection rule
-
-Pick the **smallest** breakpoint whose threshold is ≥ the current width; if the
-width exceeds 490, use `default`. The player must **re-pick on resize** (window
-resize, rotation, fullscreen enter/exit).
+Pick the **smallest** breakpoint whose threshold is ≥ the current width; if wider
+than 490, use `default`. **Re-pick on resize** (window resize, rotation, fullscreen).
 
 ```ts
 const ORDER = ["200", "300", "490", "default"] as const; // narrow → wide
 
-function resolveViewport(viewports: Viewports, width: number): ViewportLayout {
+function resolveViewport(viewports, width) {
   const start = width <= 200 ? 0 : width <= 300 ? 1 : width <= 490 ? 2 : 3;
-  // Walk widening: a viewport with no rows in any region is "not authored" for
-  // this width — fall through to the next wider one. `default` is the base.
+  // A viewport with no rows in any region is "not authored" for this width —
+  // fall through to the next wider one. `default` is the base.
   for (let i = start; i < ORDER.length; i++) {
     const vp = viewports[ORDER[i]];
-    if (vp && hasAnyRow(vp.regions)) return vp;
+    if (vp && (vp.regions.top.length || vp.regions.center.length || vp.regions.bottom.length)) return vp;
   }
   return viewports.default;
 }
-
-const hasAnyRow = (r: Regions) =>
-  r.top.length || r.center.length || r.bottom.length;
 ```
 
-> **Why fall through?** The dashboard may author only some viewports (e.g. a
-> custom `default` and `200`, leaving `490`/`300` blank). A blank viewport means
-> "inherit the next wider design," and `default` is always present as the base.
+> **Why fall through?** The dashboard may author only some viewports; a blank one
+> means "inherit the next wider design," and `default` is always the base.
 
 ---
 
 ## 4. Collapse in Setting
 
-Each viewport's **`collapseInSetting`** is an ordered list of **icon** controls
-that live _inside the Setting menu_ instead of on the bar — a responsive way to
-shed buttons on narrow players.
+Each viewport's **`collapseInSetting`** is an ordered list of **icon** controls that
+live _inside the Setting menu_ instead of on the bar — a responsive way to shed
+buttons on narrow players.
 
-Contract:
+- Only **icon**-kind controls appear here (never sliders/text/spacer/background,
+  never `Setting`). Custom icon controls qualify; resolve their glyph from `controls`.
+- **`Setting` is auto-managed by the authoring tool:** when `collapseInSetting` is
+  non-empty, `Setting` is present in that viewport's `regions`; when empty, it's
+  absent. The player just renders what's there.
+- Collapsed ids are **not** in `regions`.
 
-- Only **icon**-kind controls appear here (never sliders/text, never `Setting`
-  itself). This includes **custom** icon controls — resolve their glyph from the
-  `controls` block, same as on the bar ([§7b](#7b-custom-controls--icon-overrides-the-controls-block)).
-- **The `Setting` control is auto-managed by the authoring tool:** when
-  `collapseInSetting` is **non-empty**, `Setting` is guaranteed to be present in
-  that viewport's `regions`; when it is **empty**, `Setting` is **absent**. The
-  player does not add or remove `Setting` itself — it just renders what's there.
-- The collapsed ids are **not** in `regions` (they were taken off the bar).
-
-### Player behavior
-
-- Render `regions` normally — the `Setting` icon (when present) is just another
-  icon control on the bar.
-- Activating `Setting` opens a menu/popover/sheet; populate it from
-  `collapseInSetting`, rendering each id with the same registry (icon + behavior)
-  used on the bar.
-- If `collapseInSetting` is empty there is no `Setting` icon and no menu.
-
-```ts
-function renderSettingMenu(
-  ids: ControlId[],
-  controls: Controls,
-  host: SettingMenu,
-  player: Player,
-) {
-  if (ids.length === 0) return; // no Setting icon exists either
-  for (const id of ids) {
-    const c = resolveControl(id, controls); // glyph via override / custom decl (§7b)
-    host.append(menuItem(c, () => c.onActivate?.(player)));
-  }
-}
-```
+Render `regions` normally (the `Setting` icon is just another icon on the bar);
+activating `Setting` opens a menu populated from `collapseInSetting`, each id
+rendered through the same registry (§7b). Empty list ⇒ no `Setting` icon, no menu.
 
 ---
 
 ## 5. Row shape (lane-keyed)
 
-A `Row` is an object keyed by lane. Each lane has an ordered `items` list and,
-when any of its items stretch, a `fill` list. Empty lanes are omitted.
+A `Row` is an object keyed by lane; each lane has ordered `items` and, when any
+stretch, a `fill` list. Empty lanes omitted.
 
 ```jsonc
 {
@@ -275,17 +184,17 @@ when any of its items stretch, a `fill` list. Empty lanes are omitted.
 ```ts
 type Lane = "start" | "center" | "end";
 interface LaneGroup {
-  items: ControlId[]; // ids: built-in or CUSTOM_* / cdt_*, ordered L→R
+  items: ControlId[]; // ids: built-in or CUSTOM_* / cdt_*, ordered L→R (may include spacer/background)
   fill?: ControlId[]; // subset of items that stretch; omitted when none
 }
 type Row = Partial<Record<Lane, LaneGroup>>;
 ```
 
-A **fill item stays inline in `items`** — its position in the sequence is the
-layout information; `fill` only says "this item absorbs the row's remaining
-space". The example above renders
-`Backward — VideoProgress (all remaining width) — Forward`. Only the
-`VideoProgress` slider ever appears in `fill`.
+A **fill item stays inline in `items`** — its position is the layout information;
+`fill` only says "this item absorbs the row's remaining space". Only the
+`VideoProgress` slider ever appears in `fill`. **Spacers and lane backgrounds are
+also inline in `items`**, but render specially (a blank gap / a backdrop layer —
+§7d); their position in the sequence still matters.
 
 ---
 
@@ -299,32 +208,26 @@ space". The example above renders
 | `fill` item | Expands to absorb all remaining horizontal space | `flex: 1`           | `Modifier.weight(1f)` | `.frame(maxWidth: .infinity)` |
 
 - A row with `start` + `end` lanes reads as **space-between**.
-- A `fill` item (the `VideoProgress` slider) absorbs the slack — from its own
-  position in `items` — so you never need an empty spacer element. A lane
-  containing a fill item must itself grow to make room for it (`flex: 1` on the
-  lane too, on web).
-- Item gap inside a lane = `theme.gap`.
-
-Every primitive maps to a first-class layout type on each platform — no custom
-layout engine required:
+- A `fill` item absorbs the slack from its own position in `items`. A lane holding a
+  fill item must itself grow (`flex: 1` on the lane, on web).
+- **Item gap inside a lane = `theme.gap`.** There is no extra gap _between_ lanes —
+  they're edge/center aligned, so a fill item butts right up to a neighbouring lane.
 
 | Concept      | Web                      | Android  | iOS      |
 | ------------ | ------------------------ | -------- | -------- |
 | region stack | `flex-direction: column` | `Column` | `VStack` |
 | row          | `display: flex`          | `Row`    | `HStack` |
+| player pad   | `padding: paddingY paddingX` | container inset | container inset |
 
 ---
 
 ## 7. Controls (`gridIdentifier`)
 
-Each item in a lane is a control **id** — the stable, cross-platform key the
-player binds rendering _and behavior_ to. Usually it's one of the **17 reserved
-`gridIdentifier`s** below (shared by the authoring tool, web, Android, and iOS); it
-may also be a **`CUSTOM_*`** custom/text id or a **`cdt_*`** dynamic-text id
-declared in the `controls` block
-([§7b](#7b-custom-controls--icon-overrides-the-controls-block) /
-[§7c](#7c-text-controls-the-controls-block)). A control absent from the JSON is
-simply not rendered (no explicit "hidden" flag).
+Each item in a lane is a control **id** — the stable, cross-platform key the player
+binds rendering _and behavior_ to. Usually one of the **17 reserved
+`gridIdentifier`s**; it may also be a **`CUSTOM_*`** custom/text/spacer/background id
+or a **`cdt_*`** dynamic-text id declared in `controls` (§7b). A control absent from
+the JSON is simply not rendered.
 
 ### The 17-control catalog (the contract)
 
@@ -343,360 +246,317 @@ simply not rendered (no explicit "hidden" flag).
 | 11  | `PlayNPause`       | icon   |                                                                  |
 | 12  | `Quality`          | icon   |                                                                  |
 | 13  | `SaveVideoOffline` | icon   |                                                                  |
-| 14  | `Setting`          | icon   | menu container — auto-managed (see [§4](#4-collapse-in-setting)) |
+| 14  | `Setting`          | icon   | menu container — auto-managed ([§4](#4-collapse-in-setting))     |
 | 15  | `Speed`            | icon   |                                                                  |
 | 16  | `VideoProgress`    | slider | typically `fill`                                                 |
-| 17  | `Volume`           | icon   | on-demand hover slider — see [§7a](#7a-volume--the-hover-slider) |
+| 17  | `Volume`           | icon   | on-demand hover slider — [§7a](#7a-volume--the-hover-slider)     |
 
-> **All time built-ins were removed** (`TimeConsumed` / `TimeLeft` / `TimeDuration`
-> / `TimeAll`). They — plus Current Chapter, Dynamic Text, and Title — are now
-> authored as **text controls** and ship full declarations in the `controls` block;
-> see [§7c](#7c-text-controls-the-controls-block).
+> Time readouts, Current Chapter, Dynamic Text, and Title are **not** built-ins —
+> they're **text controls** in `controls` ([§7c](#7c-text-controls)). Spacers and
+> backgrounds are also `controls` entries ([§7d](#7d-spacers--backgrounds)).
 
-> The **kind** is _not_ in the JSON for a built-in — it is a property of the id,
-> known to the player from this static catalog. The JSON only ships ids; the player
-> looks up kind, icon, and behavior locally. (Text and custom controls _do_ carry
-> their `kind` in the `controls` block, since the player has no catalog entry for
-> them — see [§7b](#7b-custom-controls--icon-overrides-the-controls-block) /
-> [§7c](#7c-text-controls-the-controls-block).)
+> A built-in's **kind** is _not_ in the JSON — the player knows it from this
+> catalog. Custom / text / spacer / background controls _do_ carry their `kind` in
+> `controls`, since the player has no catalog entry for them.
 
 ### kind → how to render
 
-| kind     | Web             | Android (Compose)      | iOS (SwiftUI)       |
-| -------- | --------------- | ---------------------- | ------------------- |
-| `icon`   | `<svg>` button  | `Icon` in `IconButton` | `Image` in `Button` |
-| `text`   | `<span>`        | `Text`                 | `Text`              |
-| `slider` | `<input range>` | `Slider`               | `Slider`            |
+| kind         | Web                       | Android (Compose)      | iOS (SwiftUI)       |
+| ------------ | ------------------------- | ---------------------- | ------------------- |
+| `icon`       | `<svg>` button            | `Icon` in `IconButton` | `Image` in `Button` |
+| `text`       | `<span>`                  | `Text`                 | `Text`              |
+| `slider`     | `<input range>`           | `Slider`               | `Slider`            |
+| `spacer`     | fixed-width blank box     | `Spacer`/`Box(width)`  | `Spacer().frame`    |
+| `background` | absolute backdrop layer   | `Box` behind lane      | `ZStack` background |
 
 ### Recommended player-side registry
 
-Keep one map from `gridIdentifier` → render kind + behavior. This is the single
-integration point; the layout engine stays dumb. The same registry renders a
-control whether it sits on the bar or inside the Setting menu.
+One map from `gridIdentifier` → render kind + behavior. The layout engine stays
+dumb; the same registry renders a control on the bar or in the Setting menu.
 
 ```ts
-type ControlKind = "icon" | "text" | "slider";
-
-interface ControlEntry {
-  kind: ControlKind;
-  icon?: IconAsset;                 // for kind "icon"
-  textFormat?: (s: PlayerState) => string;  // for kind "text"
-  onActivate?: (player: Player) => void;    // behavior — bound here, not in JSON
-}
-
 const REGISTRY: Record<ControlId, ControlEntry> = {   // 17 built-ins; host may add CUSTOM_* / cdt_* ids
-  PlayNPause: { kind: "icon", icon: PlayIcon, onActivate: (p) => p.toggle() },
-  Forward:    { kind: "icon", icon: FwdIcon,  onActivate: (p) => p.seek(+10) },
-  Setting:    { kind: "icon", icon: GearIcon, onActivate: (p) => p.toggleSettingMenu() },
-  VideoProgress: { kind: "slider", onActivate: /* seek to ratio */ },
-  Volume:     { kind: "icon", icon: VolumeIcon, onActivate: /* toggle mute */ }, // + hover slider — §7a
-  // …all 17 (time readouts are now text controls — see §7c)…
+  PlayNPause:    { kind: "icon", icon: PlayIcon, onActivate: (p) => p.toggle() },
+  Forward:       { kind: "icon", icon: FwdIcon,  onActivate: (p) => p.seek(+10) },
+  Setting:       { kind: "icon", icon: GearIcon, onActivate: (p) => p.toggleSettingMenu() },
+  VideoProgress: { kind: "slider", /* seek to ratio */ },
+  Volume:        { kind: "icon", icon: VolumeIcon, /* toggle mute + hover slider §7a */ },
+  // …all 17 (time readouts are text controls — §7c)…
 };
 ```
 
-> Iconography for the **17 built-ins** is **not** shipped in the JSON — native
-> teams provide matching glyphs (same SVGs, or agreed SF Symbols / Material
-> equivalents) for parity. **Custom controls and icon overrides** _do_ ship a
-> Lucide icon **name** (a string, never raw SVG) in the `controls` block; map that
-> name to your platform's glyph set ([§7b](#7b-custom-controls--icon-overrides-the-controls-block)).
+> Iconography for the **17 built-ins** is not shipped in the JSON — native teams
+> provide matching glyphs. **Custom controls, overrides, spacers, and backgrounds**
+> _do_ ship a Lucide icon **name** (a string, never raw SVG); map it to your glyph
+> set (placeholder if unknown). The spacer/background chip glyph is cosmetic
+> (dashboard-only) — the player renders those elements as a gap / a layer, not as an
+> icon.
 
 ---
 
 ## 7a. `Volume` — the hover slider
 
-`Volume` sits on the bar as a plain icon; its slider appears **on demand**. None
-of this is in the JSON — like all behavior it is implemented per platform,
-keyed by the id:
+`Volume` sits on the bar as a plain icon; its slider appears **on demand**. Not in
+the JSON — behavior, implemented per platform:
 
-- **Trigger:** pointer hover on the icon (desktop); press/tap on touch.
-- **Inline, not overlay.** The slider takes **real row space** next to the icon:
-  neighbors shift over and a `fill` item (`VideoProgress`) absorbs the change by
-  shrinking. Never draw it on top of other controls.
-- **Side:** open toward the side of the player with room — the icon's side of
-  the frame with ≥ 150px free, else whichever side has more. Re-measure on
-  every reveal; the answer changes with viewport and layout.
-- **Width:** **150px**, capped to what the row can actually free up (free row
-  space plus what the fill slider can shrink, down to its minimum), with a
-  floor of ~60px so the thumb stays usable on narrow bars.
-- **Lifecycle:** collapses when the pointer leaves the icon + slider; while the
-  thumb is **held**, stays open even if the pointer strays off the row.
-- **Look:** no pill/backdrop behind it — the bare range on the bar, thumb/track
-  accented with `theme.primary` like `VideoProgress`.
+- **Trigger:** hover (desktop) / press (touch).
+- **Inline, not overlay** — takes real row space; neighbours shift and a `fill`
+  `VideoProgress` shrinks. Never overlaps.
+- **Side:** toward the side with ≥150px free, else the roomier one; re-measure per
+  reveal.
+- **Width:** 150px capped to the row's slack (down to ~60px floor).
+- **Lifecycle:** collapses when the pointer leaves; stays open while the thumb is
+  held. **Look:** bare range, thumb/track accented with `theme.primary`.
 
 ---
 
-## 7b. Custom controls & icon overrides (the `controls` block)
+## 7b. The `controls` block
 
-`schemaVersion` 2.1 adds an **optional** top-level `controls` object, keyed by id,
-carrying the _extra_ information a stock player can't infer for two authoring
-features. Untouched built-ins never appear here; the block is **omitted entirely
-when empty** (a layout with no customs/overrides simply has no `controls` key). Only **used** controls (placed on a bar or in `collapseInSetting`)
-are declared.
+An **optional** top-level object, keyed by id, carrying the extra information a stock
+player can't infer. Untouched built-ins never appear; the block is **omitted when
+empty**. Only **used** ids (on a bar or in `collapseInSetting`) are declared. An
+entry can carry any mix of:
 
 ```jsonc
 "controls": {
-  "CUSTOM_like": {            // 1) CUSTOM CONTROL — full declaration
-    "custom": true,
-    "kind":   "icon",         // "icon" or "text" (text customs — see §7c)
-    "label":  "Like",
-    "icon":   "Heart"         // a Lucide icon NAME (never raw SVG)
-  },
-  "FullScreen": { "icon": "Maximize2" }   // 2) ICON OVERRIDE — new glyph only
+  "CUSTOM_like": { "custom": true, "kind": "icon", "label": "Like", "icon": "Heart" }, // custom control
+  "FullScreen": { "icon": "Maximize2" },                                               // icon override
+  "PlayNPause": { "icon": "Play", "size": 48, "background": { "padding": 10, "radius": 40 } }, // resized + per-icon bg
+  "CUSTOM_spacer": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "RectangleHorizontal", "width": 200 },
+  "CUSTOM_bg": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 4, "radius": 24 },
+  "CUSTOM_time_left": { "custom": true, "kind": "text", "label": "Time Left", "icon": "ClockArrowDown", "textType": "timeLeft" }
 }
 ```
 
-**1. Custom controls.** A user-defined control whose id is `CUSTOM_<slug>` (the
-`CUSTOM_` prefix guarantees no collision with the reserved ids). The player has no
-local catalog entry for it, so it is **fully declared**: `kind` (`icon`, or `text`
-for the [§7c](#7c-text-controls-the-controls-block) text controls), `label`, and
-`icon`. It sits in `items` / `collapseInSetting` exactly like a built-in id.
+**Field reference** (all optional unless noted):
 
-> **No built-in behavior.** A custom control carries layout + glyph only. The
-> player renders it, but activation does nothing unless the **host app** registers
-> a handler for its `CUSTOM_*` id. Treat an unhandled custom control as decorative.
->
-> ```ts
-> // Host opt-in: give a custom control behavior by registering its id.
-> REGISTRY["CUSTOM_like"] = {
->   kind: "icon",
->   onActivate: (p) => like(p.videoId),
-> };
-> ```
+| field            | on                        | meaning                                                                 |
+| ---------------- | ------------------------- | ----------------------------------------------------------------------- |
+| `custom: true`   | custom/text/spacer/background | this id has no local catalog entry — fully declared                 |
+| `kind`           | custom entries            | `icon` \| `text` \| `spacer` \| `background`                            |
+| `label`          | custom entries            | display name                                                            |
+| `icon`           | any                       | a Lucide **name**; overrides the catalog glyph for a built-in           |
+| `size`           | icon                      | per-icon size (px), overrides `theme.iconSize`                          |
+| `background`     | icon                      | `{ padding, radius }` — a shape behind this one glyph (§7d)             |
+| `textType`+extras| text                      | see [§7c](#7c-text-controls)                                            |
+| `width`          | spacer                    | spacer width (px)                                                       |
+| `paddingX/Y`,`radius` | background           | lane-background inset + corner radius (§7d)                             |
 
-**2. Icon overrides.** A reserved built-in whose glyph the user swapped. The id
-stays a built-in — `kind` and behavior are still resolved from the local catalog —
-and only the replacement `icon` (a Lucide name) rides along.
+> **Color/opacity are never per-control.** Every background — lane and per-icon —
+> is filled with `theme.backgroundColor` at `theme.backgroundOpacity`.
 
-### Resolution rules (what the player must do)
+### Resolution rules
 
-For any item id seen while rendering (in `items` **or** `collapseInSetting`), with
-`controls = layout.controls ?? {}`:
+For any item id (in `items` **or** `collapseInSetting`), with `controls = layout.controls ?? {}`:
 
 ```ts
-function resolveControl(id: ControlId, controls: Controls): RenderEntry {
+function resolveControl(id, controls) {
   const decl = controls[id];
-
-  // kind: declared for customs (icon | text); from the local catalog for built-ins.
   const kind = decl?.custom ? (decl.kind ?? "icon") : REGISTRY[id].kind;
-
-  // icon: a declared `icon` (override or custom) WINS over the catalog default.
-  const iconName = decl?.icon ?? CATALOG_ICON[id]; // a Lucide name
-  const icon = resolveLucide(iconName) ?? PLACEHOLDER_ICON; // map name → glyph asset
-
-  // text: built-ins format from the catalog; a text custom formats from its
-  // declaration's `textType` (+ separator / variable / showNumber) — see §7c.
-  const textFormat = decl?.custom ? textFormatFor(decl) : REGISTRY[id]?.textFormat;
-
-  // behavior: only built-ins (and host-registered customs) have one.
-  return { kind, icon, onActivate: REGISTRY[id]?.onActivate, textFormat };
+  const iconName = decl?.icon ?? CATALOG_ICON[id];            // declared icon WINS
+  const icon = resolveLucide(iconName) ?? PLACEHOLDER_ICON;
+  const size = decl?.size ?? theme.iconSize;                  // per-icon override
+  const iconBg = decl?.background;                            // { padding, radius } | undefined
+  const width = decl?.width;                                  // spacer
+  const bgPad = { x: decl?.paddingX, y: decl?.paddingY, r: decl?.radius }; // lane background
+  const textFormat = decl?.custom && decl.kind === "text" ? textFormatFor(decl) : REGISTRY[id]?.textFormat;
+  return { kind, icon, size, iconBg, width, bgPad, textFormat, onActivate: REGISTRY[id]?.onActivate };
 }
 ```
 
-- **`icon` is always a Lucide name string**, never raw SVG. Map it to your
-  platform's glyph set (Lucide on web; the agreed Lucide-equivalent SF Symbol /
-  Material asset on native). If the name is unknown to your build, draw a
-  **placeholder glyph** rather than failing.
-- A declared `icon` **overrides** the local catalog glyph for that id — this is how
-  the override feature reaches the player; the id, `kind`, and behavior are
+- **`icon` is always a Lucide name string.** Map it to your glyph set; placeholder if
+  unknown.
+- A declared `icon` **overrides** the catalog glyph; the id, `kind`, and behavior are
   otherwise unchanged.
-- Render every control — bar and Setting menu — through `resolveControl`, so custom
-  glyphs and overrides apply uniformly.
+- **No built-in behavior for customs.** A custom control renders but does nothing
+  unless the **host app** registers a handler for its `CUSTOM_*` id.
 
 ---
 
-## 7c. Text controls (the `controls` block)
+## 7c. Text controls
 
-A **text control** is a `controls` entry with `"kind": "text"` and a **`textType`**
-discriminator. These replace the old time built-ins (`TimeConsumed`, `TimeLeft`,
-`TimeDuration`, `TimeAll`) and add three new elements (Current Chapter, Dynamic Text,
-Title). The authoring tool's **"+ Add text"** flow produces them; each is declared in
-full because the player has no catalog entry for its id. (The default layout ships a
-seeded `timeConsumed` text control, id `CUSTOM_time_consumed` — see [§9c](#9c-full-document-the-canonical-fixture).)
+A **text control** is a `controls` entry with `"kind": "text"` and a **`textType`**.
+Rendered on the ordinary `kind: "text"` path (a `<span>`/`Text`); the formatter comes
+from the declaration, not a catalog entry.
 
-```jsonc
-"controls": {
-  "CUSTOM_time_all": {
-    "custom": true, "kind": "text", "label": "Time All", "icon": "Clock",
-    "textType": "timeAll", "separator": " / "     // glue between elapsed / total
-  },
-  "CUSTOM_current_chapter": {
-    "custom": true, "kind": "text", "label": "Current Chapter", "icon": "ListVideo",
-    "textType": "currentChapter", "showNumber": true   // append the "02/14" status
-  },
-  "cdt_promoName": {
-    "custom": true, "kind": "text", "label": "cdt_promoName", "icon": "Braces",
-    "textType": "dynamicText", "variable": "cdt_promoName"  // filled from SDK input
-  }
-}
-```
-
-### The `textType` catalog
-
-| `textType`       | id form       | renders                                | extra field           |
-| ---------------- | ------------- | -------------------------------------- | --------------------- |
-| `timeConsumed`   | `CUSTOM_*`    | elapsed time `HH:MM`                   | —                     |
-| `timeLeft`       | `CUSTOM_*`    | remaining time `HH:MM`                 | —                     |
-| `timeDuration`   | `CUSTOM_*`    | total duration `HH:MM`                 | —                     |
-| `timeAll`        | `CUSTOM_*`    | `elapsed` + `separator` + `duration`   | `separator` (`" / "`) |
-| `currentChapter` | `CUSTOM_*`    | current chapter **title** (text)       | `showNumber` (bool)   |
-| `dynamicText`    | `cdt_*`       | value of the `variable`, set at load   | `variable` (`cdt_*`)  |
-| `title`          | `CUSTOM_*`    | the video title                        | —                     |
-
-- **Time readouts** format from player time, exactly as the old built-ins did.
-  `timeAll` joins elapsed and total with its **`separator`** (default `" / "`).
-- **`currentChapter`** renders the **chapter title** (a string, not a number). When
-  **`showNumber`** is `true`, append the `NN/MM` position status (e.g.
-  `Introduction 02/14`); when `false` or absent, show the title alone.
-- **`dynamicText`** renders host-supplied text. Its id **and** `variable` are a
-  `cdt_`-prefixed name; the SDK/host provides the value for that variable at player
-  load (e.g. `player.setVariable("cdt_promoName", "Summer Sale")`). Until it's set,
-  render empty (or the `variable` name in an authoring preview).
-- **`title`** renders the current video's title.
-
-### Rendering
-
-Render text controls with the ordinary `kind: "text"` path (a `<span>`/`Text`) — the
-only difference from a built-in readout is that the formatter comes from the
-declaration, not a local catalog entry. Derive it from `textType`:
+| `textType`       | id form      | renders                              | extra field           |
+| ---------------- | ------------ | ------------------------------------ | --------------------- |
+| `timeConsumed`   | `CUSTOM_*`   | elapsed time `HH:MM`                 | —                     |
+| `timeLeft`       | `CUSTOM_*`   | remaining time `HH:MM`               | —                     |
+| `timeDuration`   | `CUSTOM_*`   | total duration `HH:MM`               | —                     |
+| `timeAll`        | `CUSTOM_*`   | `elapsed` + `separator` + `duration` | `separator` (`" / "`) |
+| `currentChapter` | `CUSTOM_*`   | current chapter **title**            | `showNumber` (bool)   |
+| `dynamicText`    | `cdt_*`      | value of the `variable`, set at load | `variable` (`cdt_*`)  |
+| `title`          | `CUSTOM_*`   | the video title                      | —                     |
 
 ```ts
-function textFormatFor(decl: TextDecl): (s: PlayerState) => string {
+function textFormatFor(decl) {
   switch (decl.textType) {
     case "timeConsumed":   return (s) => fmt(s.t);
     case "timeLeft":       return (s) => fmt(s.dur - s.t);
     case "timeDuration":   return (s) => fmt(s.dur);
     case "timeAll":        return (s) => `${fmt(s.t)}${decl.separator ?? " / "}${fmt(s.dur)}`;
-    case "currentChapter": return (s) =>
-      decl.showNumber ? `${s.chapter.title} ${pad(s.chapter.index)}/${pad(s.chapter.count)}`
-                      : s.chapter.title;
-    case "dynamicText":    return (s) => s.variables[decl.variable!] ?? "";
+    case "currentChapter": return (s) => decl.showNumber
+      ? `${s.chapter.title} ${pad(s.chapter.index)}/${pad(s.chapter.count)}` : s.chapter.title;
+    case "dynamicText":    return (s) => s.variables[decl.variable] ?? "";
     case "title":          return (s) => s.title;
-    default:               return () => "";
   }
 }
 ```
 
-- A text control has **no `onActivate`** — it is a passive readout (never
-  collapsible into Setting, which is icon-only).
-- `separator`, `showNumber`, and `variable` appear **only** on the relevant
-  `textType`; ignore any that don't apply.
+- A text control has **no `onActivate`** (passive readout; never collapsible).
+- `dynamicText` renders host-supplied text: its id **and** `variable` are a
+  `cdt_`-prefixed name; the host provides the value at load
+  (`player.setVariable("cdt_promoName", "Summer Sale")`). Render empty until set.
+- `separator` / `showNumber` / `variable` appear only on the relevant `textType`.
+
+---
+
+## 7d. Spacers & backgrounds
+
+Two ways to shape the bar with blank/decorative elements. Both are `controls` entries
+and, for lane elements, appear inline in a lane's `items`.
+
+**Spacer** (`kind: "spacer"`). A blank block that adds horizontal space; it stretches
+to the lane/row height and is `width` px wide. Render it as an empty fixed-width box
+inline at its position in `items` (no glyph, no behavior).
+
+```ts
+case "spacer": return spacerBox(c.width); // width px; full height; transparent
+```
+
+**Lane background** (`kind: "background"`). A translucent color layer behind a lane's
+controls. It's inline in `items`, but **not** rendered inline — pull it out and draw
+it as a backdrop for its lane:
+
+- **snaps horizontally** to that lane's other controls (their bounding box grown by
+  `paddingX` — default `2`);
+- **fills the full row height** (grown by `paddingY` — default `4`);
+- sits **behind** the lane's items;
+- filled with `theme.backgroundColor` at `theme.backgroundOpacity`, corners rounded by
+  `radius` (default `4`).
+
+```ts
+// Web sketch: lane is position:relative; the layer is an absolute child behind items.
+function renderLaneBackground(c, laneEl /* holds the non-background items */) {
+  const layer = div("bg");
+  layer.style.background = rgba(theme.backgroundColor, theme.backgroundOpacity);
+  layer.style.borderRadius = `${c.bgPad.r ?? 4}px`;
+  // inset: -paddingX left/right (hug the lane's items), -paddingY top/bottom to the row box
+  positionBehind(layer, laneEl, { x: c.bgPad.x ?? 2, y: c.bgPad.y ?? 4 });
+  return layer; // z-index below the lane's items
+}
+```
+
+**Per-icon background** (the `background` field on an **icon** decl). A shape drawn
+directly behind **one glyph** — a circle or badge that hugs just that icon,
+independent of lane spacers or row height. `{ padding, radius }`, filled with the same
+shared `theme.backgroundColor` / `backgroundOpacity`; render `border-radius` as
+`min(radius, 50%)` on the (square) icon+padding box so a large radius is a full circle.
+
+```ts
+case "icon": {
+  const btn = iconButton(c.icon, c.size, () => c.onActivate?.(player));
+  if (c.iconBg) drawBehindGlyph(btn, {                    // a circle/badge behind THIS icon
+    padding: c.iconBg.padding, radius: c.iconBg.radius,
+    fill: rgba(theme.backgroundColor, theme.backgroundOpacity),
+  });
+  return btn;
+}
+```
+
+> **Which to use?** A **lane background** for a wide segment backdrop (e.g. a pill
+> behind a group of top-bar icons). A **per-icon background** for a circle behind a
+> single button (e.g. the transport Play / Backward / Forward circles).
 
 ---
 
 ## 8. Render algorithm (web reference)
 
 ```ts
-function renderPlayer(layout: PlayerLayout, root: HTMLElement, player: Player) {
-  applyTheme(root, layout.theme); // shared tokens
-
-  const controls = layout.controls ?? {}; // §7b — custom + overrides
+function renderPlayer(layout, root, player) {
+  applyTheme(root, layout.theme);
+  const controls = layout.controls ?? {};
   const render = () => {
-    const vp = resolveViewport(layout.viewports, player.width); // §3 — re-run on resize
+    const vp = resolveViewport(layout.viewports, player.width); // re-run on resize
     root.replaceChildren();
-    renderRegions(vp.regions, controls, root, player); // bar
-    renderSettingMenu(vp.collapseInSetting, controls, settingHost, player); // §4 — Setting menu
+    renderRegions(vp.regions, controls, root, player);
+    renderSettingMenu(vp.collapseInSetting, controls, settingHost, player);
   };
-
   render();
-  player.onResize(render); // re-pick viewport on width change
+  player.onResize(render);
 }
 
-function applyTheme(root: HTMLElement, t: Theme) {
+function applyTheme(root, t) {
   root.style.setProperty("--primary", t.primary);
   root.style.setProperty("--secondary", t.secondary);
   root.style.setProperty("--gap", `${t.gap}px`);
   root.style.setProperty("--bar-height", `${t.barHeight}px`);
   root.style.setProperty("--icon-size", `${t.iconSize}px`);
+  // shared background + player container padding
+  root.style.setProperty("--bg-fill", rgba(t.backgroundColor, t.backgroundOpacity));
+  root.style.padding = `${t.paddingY}px ${t.paddingX}px`;
 }
 
-function renderRegions(
-  regions: Regions,
-  controls: Controls,
-  root: HTMLElement,
-  player: Player,
-) {
-  for (const region of ["top", "center", "bottom"] as const) {
-    const regionEl = makeRegion(region); // flex column
-    for (const row of regions[region] ?? []) {
-      const rowEl = makeRow(); // flex row, gap
-      for (const lane of ["start", "center", "end"] as const) {
-        const group = row[lane];
-        if (!group) continue;
-        const laneEl = makeLane(lane); // start|center|end; grows if it holds a fill item
-        for (const id of group.items) {
-          const el = renderControl(id, controls, player); // id known: catalog or `controls`
-          if (group.fill?.includes(id)) el.classList.add("fill"); // flex: 1
-          laneEl.append(el);
-        }
-        rowEl.append(laneEl);
-      }
-      regionEl.append(rowEl);
-    }
-    root.append(regionEl);
+function renderLane(lane, group, controls, player) {
+  const laneEl = makeLane(lane); // position: relative; items sit above backgrounds
+  const backgrounds = [];
+  for (const id of group.items) {
+    const c = resolveControl(id, controls);
+    if (c.kind === "background") { backgrounds.push(c); continue; } // draw as backdrop, not inline
+    const el = renderControl(id, c, player);
+    if (group.fill?.includes(id)) el.classList.add("fill"); // flex: 1
+    laneEl.append(el);
   }
+  for (const c of backgrounds) laneEl.prepend(renderLaneBackground(c, laneEl)); // behind items
+  return laneEl;
 }
 
-function renderControl(id: ControlId, controls: Controls, player: Player) {
-  const c = resolveControl(id, controls); // §7b — glyph/kind/behavior
+function renderControl(id, c, player) {
   switch (c.kind) {
-    case "icon":
-      return iconButton(c.icon, () => c.onActivate?.(player)); // custom: no-op unless host-bound
-    case "text":
-      return textReadout(id, c.textFormat!); // built-in time or a text control (§7c)
-    case "slider":
-      return slider(id, player); // progress
+    case "icon":   return iconWithOptionalBg(c, player);       // §7d — size + per-icon background
+    case "text":   return textReadout(id, c.textFormat);       // §7c
+    case "slider": return slider(id, player);
+    case "spacer": return spacerBox(c.width);                  // §7d
+    // "background" is handled in renderLane (backdrop), never here
   }
 }
 ```
 
-Native renderers follow the same walk with `Column/Row` (Compose) or
-`VStack/HStack` (SwiftUI), mapping lanes and `fill` per
-[§6](#6-alignment-semantics-lanes--fill), and re-resolve the viewport on
+Native renderers follow the same walk (`Column/Row` or `VStack/HStack`), map lanes
+and `fill` per [§6](#6-alignment-semantics-lanes--fill), draw spacers as fixed-width
+spacers and backgrounds as `Box`/`ZStack` layers, and re-resolve the viewport on
 size-class / configuration changes.
 
 ---
 
 ## 9. Samples
 
-### 9a. One viewport — space-between row (`start` + `end` lanes)
+### 9a. Space-between row (`start` + `end` lanes)
 
 ```json
 {
   "regions": {
-    "top": [],
-    "center": [],
-    "bottom": [
-      {
-        "start": { "items": ["Chapters"] },
-        "end": { "items": ["Speed", "Quality", "Setting", "FullScreen"] }
-      }
-    ]
+    "top": [], "center": [],
+    "bottom": [{ "start": { "items": ["Chapters"] },
+                "end": { "items": ["Speed", "Quality", "Setting", "FullScreen"] } }]
   },
   "collapseInSetting": []
 }
 ```
 
-> A time readout on the left would be a **text control** (`kind: "text"`) declared in
-> the top-level `controls` block ([§7c](#7c-text-controls-the-controls-block)); this
-> viewport-only snippet uses a built-in icon to stay self-contained. See [§9c](#9c-full-document-the-canonical-fixture)
-> for the full document with a seeded time readout.
-
 ### 9b. Narrow viewport — controls folded into Setting
 
-At `≤300`, `Speed` + `Quality` are collapsed into the Setting menu. Note
-`Setting` **appears in `regions`** because `collapseInSetting` is non-empty:
+At `≤300`, `Speed` + `Quality` are in the Setting menu; `Setting` appears in `regions`
+because `collapseInSetting` is non-empty:
 
 ```json
 {
   "regions": {
-    "top": [],
-    "center": [],
+    "top": [], "center": [],
     "bottom": [
       { "start": { "items": ["VideoProgress"], "fill": ["VideoProgress"] } },
-      {
-        "start": { "items": ["PlayNPause"] },
-        "end": { "items": ["Setting", "FullScreen"] }
-      }
+      { "start": { "items": ["PlayNPause"] }, "end": { "items": ["Setting", "FullScreen"] } }
     ]
   },
   "collapseInSetting": ["Speed", "Quality"]
@@ -705,186 +565,134 @@ At `≤300`, `Speed` + `Quality` are collapsed into the Setting menu. Note
 
 ### 9c. Full document (the canonical fixture)
 
-Exactly what the studio's region mode emits for its default — `default` carries
-the canonical bar, narrow viewports are left blank (player falls through to
-`default`, per [§3](#3-viewports--choosing-which-layout-to-render)). The bar's time
-readout is a **seeded text control** (`CUSTOM_time_consumed`), so the `controls`
-block declares it ([§7c](#7c-text-controls-the-controls-block)). Use as the golden
-fixture for parser tests:
+Exactly what the studio emits for its default. It exercises the whole schema: a
+top-bar with **lane backgrounds** behind grouped icons, a center overlay with the
+transport icons **resized + per-icon circles** spread by **200px spacers**, a bottom
+bar with a **fill** slider + a **Time Left** text control + a lane background, the
+shared **background** color/opacity, player-container **padding**, and
+**collapseInSetting**. Narrow viewports are blank (fall through to `default`). Use as
+the golden fixture for parser tests:
 
 ```json
 {
-  "schemaVersion": "3.0",
+  "schemaVersion": "3.1",
   "layoutModel": "region",
   "theme": {
     "primary": "#1e90ff",
     "secondary": "#ffffff",
     "iconSize": 22,
     "barHeight": 40,
-    "gap": 8
+    "gap": 8,
+    "backgroundColor": "#000000",
+    "backgroundOpacity": 0.5,
+    "paddingX": 9,
+    "paddingY": 4
   },
   "controls": {
-    "CUSTOM_time_consumed": {
-      "custom": true,
-      "kind": "text",
-      "label": "Time Consumed",
-      "icon": "Clock",
-      "textType": "timeConsumed"
-    }
+    "CUSTOM_background_3": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket" },
+    "CUSTOM_background_2": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket" },
+    "CUSTOM_spacer_3": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "RectangleHorizontal", "width": 200 },
+    "Backward": { "icon": "Rewind", "size": 30, "background": { "padding": 10, "radius": 24 } },
+    "PlayNPause": { "icon": "Play", "size": 48, "background": { "padding": 10, "radius": 40 } },
+    "Forward": { "icon": "FastForward", "size": 30, "background": { "padding": 10, "radius": 24 } },
+    "CUSTOM_spacer_2": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "RectangleHorizontal", "width": 200 },
+    "CUSTOM_background": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket" },
+    "CUSTOM_time_left": { "custom": true, "kind": "text", "label": "Time Left", "icon": "ClockArrowDown", "textType": "timeLeft" }
   },
   "viewports": {
+    "200": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
+    "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
+    "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
     "default": {
       "regions": {
-        "top": [{ "end": { "items": ["PictureInPicture"] } }],
-        "center": [],
-        "bottom": [
-          { "start": { "items": ["VideoProgress"], "fill": ["VideoProgress"] } },
-          { "start": { "items": ["Backward", "PlayNPause", "Forward"] } },
+        "top": [
           {
-            "start": { "items": ["CUSTOM_time_consumed"] },
-            "end": { "items": ["Speed", "Quality", "Setting", "FullScreen"] }
+            "start": { "items": ["CUSTOM_background_3", "Cast", "AirPlay"] },
+            "end": { "items": ["PictureInPicture", "CUSTOM_background_2", "FullScreen"] }
+          }
+        ],
+        "center": [
+          {
+            "start": { "items": ["CUSTOM_spacer_3", "Backward"] },
+            "center": { "items": ["PlayNPause"] },
+            "end": { "items": ["Forward", "CUSTOM_spacer_2"] }
+          }
+        ],
+        "bottom": [
+          {
+            "center": {
+              "items": ["Volume", "VideoProgress", "CUSTOM_background", "CUSTOM_time_left", "Captions", "Setting"],
+              "fill": ["VideoProgress"]
+            }
           }
         ]
       },
-      "collapseInSetting": []
-    },
-    "490": {
-      "regions": { "top": [], "center": [], "bottom": [] },
-      "collapseInSetting": []
-    },
-    "300": {
-      "regions": { "top": [], "center": [], "bottom": [] },
-      "collapseInSetting": []
-    },
-    "200": {
-      "regions": { "top": [], "center": [], "bottom": [] },
-      "collapseInSetting": []
+      "collapseInSetting": ["Speed", "CaptionSearch"]
     }
   }
 }
 ```
 
-### 9d. With a custom control + an icon override
+### 9d. Custom control + icon override
 
-A `CUSTOM_like` button (Lucide `Heart`) placed on the bar, and `FullScreen`'s glyph
-overridden to `Maximize2`. Both ids appear in `items`; both are declared in the
-top-level `controls` block. The player renders `CUSTOM_like` with the `Heart`
-glyph (no behavior unless the host binds the id), and `FullScreen` with `Maximize2`
-while keeping its native fullscreen behavior:
+A `CUSTOM_like` button (Lucide `Heart`) and `FullScreen` overridden to `Maximize2`:
 
 ```json
 {
-  "schemaVersion": "3.0",
+  "schemaVersion": "3.1",
   "layoutModel": "region",
-  "theme": {
-    "primary": "#1e90ff",
-    "secondary": "#ffffff",
-    "iconSize": 22,
-    "barHeight": 40,
-    "gap": 8
-  },
+  "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8,
+             "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 9, "paddingY": 4 },
   "controls": {
-    "CUSTOM_like": {
-      "custom": true,
-      "kind": "icon",
-      "label": "Like",
-      "icon": "Heart"
-    },
+    "CUSTOM_like": { "custom": true, "kind": "icon", "label": "Like", "icon": "Heart" },
     "FullScreen": { "icon": "Maximize2" }
   },
   "viewports": {
     "default": {
       "regions": {
-        "top": [],
-        "center": [],
+        "top": [], "center": [],
         "bottom": [
           { "start": { "items": ["VideoProgress"], "fill": ["VideoProgress"] } },
-          {
-            "start": { "items": ["PlayNPause"] },
-            "end": { "items": ["CUSTOM_like", "FullScreen"] }
-          }
+          { "start": { "items": ["PlayNPause"] }, "end": { "items": ["CUSTOM_like", "FullScreen"] } }
         ]
       },
       "collapseInSetting": []
     },
-    "490": {
-      "regions": { "top": [], "center": [], "bottom": [] },
-      "collapseInSetting": []
-    },
-    "300": {
-      "regions": { "top": [], "center": [], "bottom": [] },
-      "collapseInSetting": []
-    },
-    "200": {
-      "regions": { "top": [], "center": [], "bottom": [] },
-      "collapseInSetting": []
-    }
+    "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
+    "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
+    "200": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] }
   }
 }
 ```
 
-### 9e. With text controls (Time All + Dynamic Text)
-
-A `Time All` readout (`00:00 / 00:00`) on the left and a host-filled `cdt_promoName`
-label on the right. Both are `kind: "text"` entries in the `controls` block, keyed
-by their ids; the player renders each from its `textType` (§7c):
+### 9e. Text controls (Time All + Dynamic Text)
 
 ```json
 {
-  "schemaVersion": "3.0",
+  "schemaVersion": "3.1",
   "layoutModel": "region",
-  "theme": {
-    "primary": "#1e90ff",
-    "secondary": "#ffffff",
-    "iconSize": 22,
-    "barHeight": 40,
-    "gap": 8
-  },
+  "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8,
+             "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 9, "paddingY": 4 },
   "controls": {
-    "CUSTOM_time_all": {
-      "custom": true,
-      "kind": "text",
-      "label": "Time All",
-      "icon": "Clock",
-      "textType": "timeAll",
-      "separator": " / "
-    },
-    "cdt_promoName": {
-      "custom": true,
-      "kind": "text",
-      "label": "cdt_promoName",
-      "icon": "Braces",
-      "textType": "dynamicText",
-      "variable": "cdt_promoName"
-    }
+    "CUSTOM_time_all": { "custom": true, "kind": "text", "label": "Time All", "icon": "Clock",
+                         "textType": "timeAll", "separator": " / " },
+    "cdt_promoName": { "custom": true, "kind": "text", "label": "cdt_promoName", "icon": "Braces",
+                       "textType": "dynamicText", "variable": "cdt_promoName" }
   },
   "viewports": {
     "default": {
       "regions": {
-        "top": [],
-        "center": [],
+        "top": [], "center": [],
         "bottom": [
           { "start": { "items": ["VideoProgress"], "fill": ["VideoProgress"] } },
-          {
-            "start": { "items": ["CUSTOM_time_all"] },
-            "end": { "items": ["cdt_promoName", "FullScreen"] }
-          }
+          { "start": { "items": ["CUSTOM_time_all"] }, "end": { "items": ["cdt_promoName", "FullScreen"] } }
         ]
       },
       "collapseInSetting": []
     },
-    "490": {
-      "regions": { "top": [], "center": [], "bottom": [] },
-      "collapseInSetting": []
-    },
-    "300": {
-      "regions": { "top": [], "center": [], "bottom": [] },
-      "collapseInSetting": []
-    },
-    "200": {
-      "regions": { "top": [], "center": [], "bottom": [] },
-      "collapseInSetting": []
-    }
+    "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
+    "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
+    "200": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] }
   }
 }
 ```
@@ -893,45 +701,47 @@ by their ids; the player renders each from its `textType` (§7c):
 
 ## 10. Resilience (player-side rules)
 
-The server guarantees a valid, current-version `region` layout, so the player
-does **not** validate the schema or gate on `schemaVersion` / `layoutModel`. The
-cases it still handles:
+The server guarantees a valid `region` layout, so the player does **not** validate
+the schema. Cases it still handles:
 
 | Situation                                  | Player behavior                                               |
 | ------------------------------------------ | ------------------------------------------------------------- |
 | `playerLayout` missing from metadata       | use built-in default layout                                   |
 | Selected viewport has no rows              | fall through to the next wider; `default` is base             |
 | Empty/omitted region                       | render nothing for it (valid)                                 |
-| `collapseInSetting` empty                  | no Setting menu (and `Setting` is absent from bar)            |
-| `controls` block absent                    | render every id from the local catalog (no customs/overrides) |
+| `collapseInSetting` empty                  | no Setting menu (and `Setting` absent from bar)               |
+| `controls` block absent                    | render every id from the local catalog                        |
 | Declared `icon` name unknown to this build | draw a placeholder glyph (don't fail)                         |
 | `CUSTOM_*` control with no host handler    | render its glyph; activation is a no-op (decorative)          |
-| Text control (`kind: "text"`, `textType`)  | render by `textType` (§7c); it's a passive readout, no behavior |
+| Text control (`kind: "text"`, `textType`)  | render by `textType` (§7c); passive readout                   |
 | `dynamicText` variable not set by host     | render empty until the host sets the `cdt_*` variable         |
-
-Because correctness is enforced upstream (dashboard validates against the shared
-`player.schema.json` before save — see [`spec.md` §9](./spec.md)), the player can
-trust that every id in `items`/`collapseInSetting` is either a known
-`gridIdentifier` **or** a `CUSTOM_*` id declared in `controls`, that declared icon
-names are well-formed, rows are well-formed, and ids are unique within a viewport.
-No defensive skipping is required on the render path beyond the placeholder-glyph
-fallback above.
+| Spacer / background element                | render as a blank gap / a backdrop layer (§7d), never a glyph |
+| Missing `size` / `background` / padding     | fall back to `theme.iconSize` / no per-icon bg / default insets |
 
 ---
 
 ## 11. Checklist for the player team
 
-- [ ] Read `playerLayout` from the metadata response; default only if absent.
-- [ ] Apply the global `theme` tokens (colors, gap, sizes).
+- [ ] Read `playerLayout` from metadata; default only if absent.
+- [ ] Apply the global `theme`: colors, gap, `iconSize`/`barHeight`, the shared
+      background fill (`backgroundColor` @ `backgroundOpacity`), and the container
+      **padding** (`paddingX` / `paddingY`).
 - [ ] Resolve the viewport by player width; **re-resolve on resize** (§3).
-- [ ] Walk each row's lanes `start → center → end` (any may be absent).
-- [ ] Implement the three lane alignments + `fill` items per platform (§6).
+- [ ] Walk each row's lanes `start → center → end`; item gap = `theme.gap`, no gap
+      between lanes; implement the three alignments + `fill` (§6).
 - [ ] Build the `gridIdentifier → {kind, icon, behavior}` registry (all 17).
-- [ ] Parse the optional `controls` block; resolve every item's glyph/kind through it (§7b).
-- [ ] Let a declared `icon` (override or custom) replace the catalog glyph; map the Lucide name to your glyph set (placeholder if unknown).
-- [ ] Render `CUSTOM_*` controls from their declaration; bind behavior only when the host registered a handler for the id.
-- [ ] Render `kind: "text"` controls by their `textType` (time / chapter / dynamic / title); wire `dynamicText` to the host's `cdt_*` variables (§7c).
-- [ ] Render `Setting` as the menu container; populate it from `collapseInSetting` (§4).
-- [ ] `Volume`: icon with the on-demand inline slider — side + width measured per reveal, pushes (never overlaps) neighbors, pinned open while dragging (§7a).
+- [ ] Parse `controls`; resolve every item's glyph/kind/size through it (§7b), with a
+      declared `icon` overriding the catalog glyph (placeholder if unknown).
+- [ ] Render `kind: "text"` by `textType`; wire `dynamicText` to host `cdt_*`
+      variables (§7c).
+- [ ] Render **spacers** as fixed-width gaps and **lane backgrounds** as backdrop
+      layers behind their lane (snap to the lane's items + padding, fill row height,
+      shared fill color) — §7d.
+- [ ] Apply per-icon **`size`** and per-icon **`background`** (a circle/badge behind
+      the glyph, shared fill, `min(radius, 50%)`) — §7d.
+- [ ] Render `Setting` as the menu container; populate from `collapseInSetting` (§4).
+- [ ] `Volume`: on-demand inline slider — side + width per reveal, pushes neighbours,
+      pinned while dragging (§7a).
 - [ ] Bind built-in behavior by id; never read behavior from JSON.
-- [ ] Test against the golden fixtures in [§9c](#9c-full-document-the-canonical-fixture), [§9d](#9d-with-a-custom-control--an-icon-override), and the text controls in [§9e](#9e-with-text-controls-time-all--dynamic-text).
+- [ ] Test against the golden fixtures in [§9c](#9c-full-document-the-canonical-fixture),
+      [§9d](#9d-custom-control--icon-override), and [§9e](#9e-text-controls-time-all--dynamic-text).

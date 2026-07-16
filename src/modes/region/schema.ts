@@ -1,5 +1,5 @@
 // Standalone schema for the exported region-mode player spec — the
-// schemaVersion 3.0 document produced by buildRegionSpec (spec.ts) — as a
+// schemaVersion 3.1 document produced by buildRegionSpec (spec.ts) — as a
 // single TS interface. Layout lives under per-viewport entries
 // (default | 490 | 300 | 200); each viewport is regions (top | center |
 // bottom) → rows → lane-keyed groups (start | center | end), empty lanes
@@ -38,19 +38,23 @@ export const ControlId = {
 export type ControlId = (typeof ControlId)[keyof typeof ControlId];
 
 export interface Layouts {
-  schemaVersion: "3.0";
+  schemaVersion: "3.1";
   layoutModel: "region";
   theme: {
     primary: string;
     secondary: string;
-    iconSize: number;
+    iconSize: number; // global default; a control's `size` overrides it
     barHeight: number;
     gap: number;
+    backgroundColor: string; // shared fill for ALL background layers
+    backgroundOpacity: number; // 0–1, shared
+    paddingX: number; // .Player container padding, left+right (px)
+    paddingY: number; // .Player container padding, top+bottom (px)
   };
   controls?: {
     [id: string]: {
       custom?: boolean;
-      kind?: "icon" | "text" | "slider";
+      kind?: "icon" | "text" | "slider" | "spacer" | "background";
       label?: string;
       icon: string; // a Lucide icon name
       // Text-control extras:
@@ -65,6 +69,20 @@ export interface Layouts {
       separator?: string; // timeAll only
       variable?: string; // dynamicText only — the cdt_ variable name
       showNumber?: boolean; // currentChapter only
+      // 3.1 extras:
+      size?: number; // icon only — per-control size (px), overrides theme.iconSize
+      width?: number; // spacer only — px width
+      // Background layers snap to their lane's controls; color/opacity are the
+      // shared theme.background* values (never per-control).
+      paddingX?: number; // background only — px the layer extends beyond its lane left+right (omitted = 10)
+      paddingY?: number; // background only — px the layer extends beyond its lane top+bottom (omitted = 10)
+      radius?: number; // background only — border-radius px, all corners (omitted = 4)
+      // icon only — a shape drawn directly BEHIND this one icon (e.g. a circle
+      // behind Play). Color/opacity are the shared theme.background* values.
+      background?: {
+        padding: number; // px around the icon (both axes)
+        radius: number; // border-radius px; a value ≥ half the box renders a full circle
+      };
     };
   };
   viewports: Record<

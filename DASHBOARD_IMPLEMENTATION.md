@@ -1,29 +1,31 @@
 # Dashboard Implementation — Regional Layout Authoring (Drag & Drop)
 
 How the **dashboard** lets a user drag controls onto a player mock, switch
-**viewports**, fold controls into **Setting**, and emit the Regional Layout JSON.
-For now the output target is `console.log` / a live code panel; later it posts to
-the layout API. The consumer side (player) is in
+**viewports**, style them, fold controls into **Setting**, undo/redo, and emit the
+Regional Layout JSON. For now the output target is `console.log` / a live code
+panel; later it posts to the layout API. The consumer side (player) is in
 [`PLAYER_IMPLEMENTATION.md`](./PLAYER_IMPLEMENTATION.md); the contract is
 [`spec.md`](./spec.md).
 
-This doc generalizes the working POC in [`src/modes/region/`](./src/modes/region/)
-(editor, state, spec), [`src/dnd.ts`](./src/dnd.ts), and
-[`src/ui/palette.ts`](./src/ui/palette.ts).
+This doc generalizes the working code in [`src/modes/region/`](./src/modes/region/)
+(editor, state, spec), [`src/registry.ts`](./src/registry.ts),
+[`src/history.ts`](./src/history.ts), [`src/dnd.ts`](./src/dnd.ts), and
+[`src/ui/`](./src/ui/).
 
-> **Schema:** the dashboard emits **`schemaVersion` 3.0** — per-**viewport**
-> layouts (`default | 490 | 300 | 200`) of lane-keyed rows, each viewport with
-> its own `collapseInSetting`
-> list, under one shared `theme`, plus an optional top-level **`controls`** block
-> declaring **custom controls**, **text controls**, and **icon overrides**
-> ([§2b](#2b-the-control-registry-built-ins--custom--overrides) / [§5](#5-serializer--internal-model--output-json)).
+> **Schema:** the dashboard emits **`schemaVersion` "3.1"** — the single current
+> version. Per-**viewport** layouts (`default | 490 | 300 | 200`) of lane-keyed
+> rows, each viewport with its own `collapseInSetting` list, under one shared
+> `theme`, plus an optional top-level **`controls`** block declaring the custom
+> controls, text/spacer/background elements, icon overrides, and per-icon
+> appearance (`size`, `background`) used anywhere in the document
+> ([§2b](#2b-the-control-registry) / [§5](#5-serializer--internal-model--output-json)).
 
-> **17 built-ins.** **All** time readouts (`TimeConsumed`, `TimeLeft`,
-> `TimeDuration`, `TimeAll`) are no longer built-in chips — they (plus Current
-> Chapter, Dynamic Text, and Title) are added through the **"+ Add text"** flow as
-> **text controls** ([§6f](#6f-text-controls--add-text)). The default layout seeds a
-> `TimeConsumed` text control (`registry.seedDefaults()`) so the default bar still
-> shows elapsed time.
+> **17 built-ins.** All time readouts (`TimeConsumed`, `TimeLeft`,
+> `TimeDuration`, `TimeAll`), plus Current Chapter, Dynamic Text, and Title, are
+> **text controls** added via **"+ Add text"** ([§6f](#6f-text-controls--add-text)),
+> not built-in chips. The two blank/decorative elements — **Spacer** and
+> **Background** — are added via **"+ Add spacer"** / **"+ Add background"**
+> ([§6g](#6g-spacers--backgrounds)).
 
 ---
 
@@ -33,26 +35,29 @@ This doc generalizes the working POC in [`src/modes/region/`](./src/modes/region
 ┌──────────────────────┐  drag  ┌──────────────────────────────┐  serialize ┌─────────────┐
 │  Control palette      │ ─────► │  Player canvas (one viewport) │ ─────────► │ console.log │
 │  17 built-ins + custom│  drop  │  regions → rows → lanes        │  on change  │ / code panel│
-│  + "Add control" +    │ ◄───── │  (top / center / bottom)       │             │  (the JSON) │
-│  "Add text" +         │drag-back└──────────────────────────────┘             └─────────────┘
-│  "Collapse in Setting"│            ▲  Viewport switcher: Default · ≤490 · ≤300 · ≤200
-└──────────────────────┘
+│  + Add text/spacer/bg │ ◄───── │  (top / center / bottom)       │             │  (the JSON) │
+│  + Collapse in Setting│drag-back└──────────────────────────────┘             └─────────────┘
+└──────────────────────┘            ▲  Viewport switcher: Default · ≤490 · ≤300 · ≤200
 ```
 
 Pieces:
 
 1. **Palette (left)** — draggable control chips: the **17 built-ins plus any
-   user-added custom + text controls** (drag source + remove target). Above them an
-   **"Add custom control"** button (pick any Lucide icon) and an **"Add text"**
-   button (time readouts, current chapter, dynamic text, title — §6f); each chip
-   also exposes inline actions to **change its icon**, **reset** an override, or
+   user-added custom control, text control, spacer, or background** (drag source +
+   remove target). Above them: **"+ Add custom control"** (pick any Lucide icon),
+   **"+ Add text"**, **"+ Add spacer"**, **"+ Add background"**; each chip also
+   exposes inline actions to **change its icon**, **reset** an override, or
    **delete** a custom control (§6d). Below them a **"Collapse in Setting"** bin.
 2. **Canvas (center)** — a player mock split into three regions; drop zones build
-   the layout. A **viewport switcher** above it swaps which viewport you're
-   editing and resizes the preview.
-3. **State + registry + serializer** — a per-viewport layout model (drops/collapses
-   mutate it) **and** a runtime **control registry** (custom controls + icon
-   overrides, §2b); both feed the Regional Layout JSON re-serialized on every change.
+   the layout. A **viewport switcher** above it swaps which viewport you're editing
+   and resizes the preview. Clicking a placed control opens a small **popover** to
+   tune it (icon size + background, spacer width, background padding/radius).
+3. **Stage toolbar** — theme colors, a shared **Background** color+opacity tool, a
+   **Padding** tool for the player container, and **Undo / Redo**.
+4. **State + registry + serializer + history** — a per-viewport layout model
+   (drops/collapses mutate it), a runtime **control registry** (custom controls,
+   icon overrides, per-icon sizes + backgrounds — §2b), and a combined **undo/redo
+   history** (§3b); all feed the Regional Layout JSON, re-serialized on every change.
 
 ---
 
@@ -83,10 +88,16 @@ interface ViewportLayout {
 }
 type Layouts = Record<Viewport, ViewportLayout>;
 
+// Shared across viewports. The one place background color/opacity and the
+// player-container padding live.
 interface Theme {
-  primary: string;
-  secondary: string;
-} // shared across viewports
+  primary: string; // progress fill / active accents
+  secondary: string; // icon + text color
+  bgColor: string; // shared fill for EVERY background (lane + per-icon)
+  bgOpacity: number; // 0–1
+  playerPadX: number; // .Player container padding, left+right (px)
+  playerPadY: number; // top+bottom (px)
+}
 ```
 
 - The store holds **four independent viewport layouts** + one **active viewport**
@@ -98,390 +109,327 @@ interface Theme {
   its collapse list.
 - Empty rows are **pruned** automatically after every edit.
 - `theme` is global (one set of tokens for all viewports).
-- The layout stores only **ids**; what each id _is_ (label, kind, icon, custom?)
-  lives in the **control registry** (§2b), persisted separately.
+- The layout stores only **ids**; what each id _is_ (label, kind, icon, custom?,
+  per-icon size/background, spacer width, background padding/radius) lives in the
+  **control registry** (§2b), persisted separately.
 
 > Why lanes? A lane is a fixed, always-present drop target, so the user can drop
 > into "the right edge of row 2" directly. The serializer emits the same lanes on
 > the wire, minus empty ones (§5).
 
+### Control kinds
+
+```ts
+type ControlKind = "icon" | "text" | "slider" | "spacer" | "background";
+```
+
+| kind         | what                                                        | added via            |
+| ------------ | ---------------------------------------------------------- | -------------------- |
+| `icon`       | a single Lucide glyph (most controls)                      | built-in / Add ctrl  |
+| `text`       | a readout (time / chapter / dynamic / title) — §6f         | + Add text           |
+| `slider`     | a range that fills width (`VideoProgress` only)            | built-in             |
+| `spacer`     | a blank block that adds horizontal space; user-set `width` | + Add spacer (§6g)   |
+| `background` | a color layer behind a lane's controls; user-set padding/radius | + Add background (§6g) |
+
 ### A control's identity: the control id
 
-Every chip and placed item is keyed by a **control id**. Three kinds:
+Every chip and placed item is keyed by a **control id**:
 
-- A **built-in `gridIdentifier`** — one of the 17 stable cross-platform ids
-  (`PlayNPause`, `VideoProgress`, …). These are the reserved contract.
-- A **custom id** `CUSTOM_<slug>` — a user-added control (icon **or** text). The
-  `CUSTOM_` prefix (from the label, slugged + uniquified) guarantees no collision
-  with the built-ins.
+- A **built-in `gridIdentifier`** — one of the 17 stable cross-platform ids.
+- A **custom id** `CUSTOM_<slug>` — a user-added control (icon, text, spacer, or
+  background). The `CUSTOM_` prefix (slugged + uniquified) guarantees no collision.
 - A **dynamic-text id** `cdt_<name>` — a Dynamic Text control, keyed by its
   SDK-facing variable name (§6f).
 
-The id's metadata (label, render `kind`, icon, and for text controls its `textType`
-+ extras) is resolved through the **registry** (§2b), not the layout. The dashboard
-uses `kind` only to render the chip/preview and to decide what may collapse — it
-never writes a built-in's `kind` into the output JSON; custom and text controls _do_
-carry their declaration (§5).
+The id's metadata (label, `kind`, icon, text extras, spacer width, background
+padding/radius) resolves through the **registry** (§2b), not the layout. Per-icon
+**size** and per-icon **background** are also registry-side, keyed by id — they
+apply to built-ins _and_ custom icons.
 
 ---
 
-## 2b. The control registry (built-ins + custom + overrides)
+## 2b. The control registry
 
-The static control table from the old POC is now a **runtime `ControlRegistry`**
-([`src/registry.ts`](./src/registry.ts)) — a single app-wide singleton seeded from
-the built-in catalog ([`src/controls.ts`](./src/controls.ts)) and layered with the
-user's edits. It is the source of truth for _what a control is_; the layout state
+The runtime **`ControlRegistry`** ([`src/registry.ts`](./src/registry.ts)) is a
+single app-wide singleton seeded from the built-in catalog
+([`src/controls.ts`](./src/controls.ts)) and layered with the user's edits. It is
+the source of truth for _what a control is and how it looks_; the layout state
 (§2/§3) only references ids.
 
-It owns three things:
+It owns five things, all persisted together to `player-studio:registry`:
 
-|                       | what                                                          | persisted                |
-| --------------------- | ------------------------------------------------------------- | ------------------------ |
-| **built-ins**         | the 17 `ControlDef`s (`id`, `label`, `kind`, `icon`) — frozen | in code                  |
-| **custom/text ctrls** | user-added `ControlDef`s, `custom: true`, id `CUSTOM_*` / `cdt_*` | `player-studio:registry` |
-| **icon overrides**    | per-id `id → iconName` for built-ins whose glyph was swapped  | `player-studio:registry` |
+|                     | what                                                             |
+| ------------------- | --------------------------------------------------------------- |
+| **built-ins**       | the 17 `ControlDef`s (frozen, in code)                          |
+| **custom controls** | user-added defs, `custom: true` — icon / text / spacer / background |
+| **icon overrides**  | `id → iconName` for built-ins whose glyph was swapped           |
+| **icon sizes**      | `id → px` per-icon size override (built-in or custom icon)      |
+| **icon backgrounds**| `id → { padding, radius }` — a circle/badge drawn behind an icon |
 
 ```ts
 class ControlRegistry {
   list(): ControlDef[];                 // built-ins ++ custom (palette iterates this)
-  get(id): ControlDef | undefined;      // built-in or custom def
-  iconOf(id): IconName;                 // override ?? def.icon  (effective glyph)
-  kindOf(id): ControlKind | undefined;  // drives isFill / isCollapsible
+  get(id): ControlDef | undefined;
+  iconOf(id): IconName;                 // override ?? def.icon (effective glyph)
+  kindOf(id): ControlKind | undefined;  // drives isFill / isCollapsible / rendering
   isCustom(id): boolean;
   isOverridden(id): boolean;
 
-  addCustom({ label, icon, kind? }): ControlId;   // mints a CUSTOM_<slug> id (icon control)
-  addText({ textType, separator?, variable?, showNumber? }): ControlId;  // a text control (§6f)
-  seedDefaults(): void;       // ensure the seeded default text control exists (fresh + reset)
-  removeCustom(id): void;                          // + purge it from every viewport (§3)
-  setIcon(id, icon): void;    // custom → edit in place; built-in → record an override
-  resetIcon(id): void;        // drop a built-in's override
-  subscribe(fn): () => void;  // re-render palette + canvas + code panel on any change
+  // per-icon appearance (built-in OR custom icon)
+  sizeOf(id): number; hasSize(id): boolean; setSize(id, px): void;   // 12–48, default 20
+  iconBgOf(id): IconBg | undefined; hasIconBg(id): boolean;
+  setIconBg(id, { padding?, radius? }): void; clearIconBg(id): void;
+
+  // creators
+  addCustom({ label, icon }): ControlId;   // a CUSTOM_<slug> icon control
+  addText({ textType, separator?, variable?, showNumber? }): ControlId; // §6f
+  addSpacer(): ControlId;                  // kind "spacer", width 24 (§6g)
+  addBackground(): ControlId;              // kind "background" (§6g)
+
+  // edits
+  setIcon(id, icon): void;  resetIcon(id): void;           // glyph override
+  updateCustom(id, { label?, icon?, width?, paddingX?, paddingY?, radius? }): void;
+  removeCustom(id): void;                                   // + purge from every viewport (§3)
+
+  seedDefaults(): void;     // build the full default look (fresh install + reset) — see below
+  snapshot(): string; restore(s): void;  // undo/redo (§3b)
+  subscribe(fn): () => void; // re-render palette + canvas + code panel on any change
 }
 export const registry = new ControlRegistry();
 ```
 
-> **Seeded default text control.** Since no time readout is a built-in, the default
-> layout references a **seeded** `CUSTOM_time_consumed` text control
-> (`DEFAULT_TIME_CONTROL_ID`). The registry creates it on a **fresh install** (no
-> persisted registry) and `state.resetToDefault()` re-creates it, so the default bar
-> always shows elapsed time. It's an ordinary text control otherwise — draggable,
-> editable, deletable.
+> **`seedDefaults()` builds the whole default.** The canonical default layout
+> references several seeded registry entries: three background layers, two 200px
+> spacers, a Time Left readout, and the transport look (Backward/Forward 30px +
+> Play 48px, each with a circular per-icon background). `seedDefaults()` creates
+> them all — on a **fresh install** (no persisted registry) and on every
+> **`state.resetToDefault()`** — so Reset restores the full default look. A
+> returning user's saved registry is loaded instead of seeded, so their edits
+> survive. Deterministic ids (`DEFAULT_CONTROL_IDS`) let the default layout name
+> the seeded controls.
 
 ### Icons are Lucide **names**
 
-An icon is just a **Lucide export name** (a string, e.g. `"Heart"`), never raw SVG.
-[`src/icons.ts`](./src/icons.ts) resolves a name to an `<svg>` via
-`renderIcon(name)` (with a `CircleHelp` fallback for an unknown name) and exposes
-the full catalog (~1958 names) for the icon picker (§6d). The same name is what the
-serializer writes into the `controls` block (§5), so the schema stays portable —
-each platform maps the name to its own glyph set.
+An icon is a **Lucide export name** (a string, e.g. `"Heart"`), never raw SVG.
+[`src/icons.ts`](./src/icons.ts) resolves a name to an `<svg>` via `renderIcon(name, size)`
+(with a `CircleHelp` fallback) and exposes the full catalog for the icon picker.
+The same name is written into the `controls` block (§5), so the schema stays
+portable — each platform maps the name to its own glyph set.
 
-- **Custom controls** (`addCustom`) are `kind: "icon"`; **text controls**
-  (`addText`) are `kind: "text"` and carry a `textType` + extras (§6f). No custom
-  sliders.
-- A registry edit fans out as a normal change: the `Studio` re-emits on
+- A registry edit fans out as a normal change: `Studio` re-emits on
   `registry.subscribe`, so palette, canvas, and the code panel all refresh live.
 
 ---
 
 ## 3. State API
 
-A store the canvas + palette drive and the serializer reads. (POC reference:
+A store the canvas + palette drive and the serializer reads. (Reference:
 [`src/modes/region/state.ts`](./src/modes/region/state.ts).)
 
 ```ts
-interface ItemPath {
-  region: RegionName;
-  row: number;
-  lane: Lane;
-  index: number;
-}
-
 class RegionState {
-  // ---- viewports -----------------------------------------------------------
+  // ---- viewports ----
   getViewports(): readonly Viewport[];
-  getViewport(): Viewport; // active
-  setViewport(v: Viewport): void; // switch which viewport is being edited
+  getViewport(): Viewport; setViewport(v): void;
 
-  // ---- active-viewport regions --------------------------------------------
-  rows(region: RegionName): Row[]; // of the ACTIVE viewport
-  find(id: ControlId): ItemPath | null;
-  has(id: ControlId): boolean; // on the bar OR collapsed in this viewport
-  place(id: ControlId, target: ItemPath): void; // into an existing lane
-  placeInNewRow(id, region, atRow, lane?): void; // into a new row
-  remove(id: ControlId): void; // from the ACTIVE viewport
-  purge(id: ControlId): void; // from EVERY viewport — used when a custom is deleted
+  // ---- active-viewport regions ----
+  rows(region): Row[]; find(id): ItemPath | null; has(id): boolean;
+  place(id, target: ItemPath): void; placeInNewRow(id, region, atRow, lane?): void;
+  remove(id): void; purge(id): void; // purge = remove from EVERY viewport (custom delete)
 
-  // ---- collapse-in-Setting (active viewport) ------------------------------
-  getCollapsed(): ControlId[];
-  isCollapsed(id: ControlId): boolean;
-  collapse(id: ControlId): void; // bar → Setting menu
-  uncollapse(id: ControlId): void; // out of Setting (does NOT re-place on bar)
+  // ---- collapse-in-Setting (active viewport) ----
+  getCollapsed(): ControlId[]; isCollapsed(id): boolean;
+  collapse(id): void; uncollapse(id): void;
 
-  // ---- non-mutating reads of ANY viewport, for serialization --------------
-  rowsOf(vp: Viewport, region: RegionName): Row[];
-  collapsedOf(vp: Viewport): ControlId[];
+  // ---- non-mutating reads of ANY viewport, for serialization ----
+  rowsOf(vp, region): Row[]; collapsedOf(vp): ControlId[];
 
-  // ---- theme + lifecycle ---------------------------------------------------
+  // ---- theme + lifecycle ----
   getTheme(): Theme;
-  setTheme(partial: Partial<Theme>): void;
-  clear(): void; // empties the ACTIVE viewport
-  resetToDefault(): void; // seeds `default`; narrow viewports blank
-  subscribe(fn: () => void): () => void;
+  setTheme(partial: Partial<Theme>): void; // primary/secondary/bgColor/bgOpacity/playerPadX/playerPadY
+  clear(): void;              // empties the ACTIVE viewport
+  resetToDefault(): void;     // re-seeds the full default (registry + default viewport)
+  snapshot(): string; restore(s): void;    // undo/redo (§3b)
+  subscribe(fn): () => void;
 }
 
-// Standalone: only icons (and never `Setting` itself) may be collapsed.
-// Resolves kind via the registry, so CUSTOM_* icon controls qualify too.
-function isCollapsible(id: ControlId): boolean; // registry.kindOf(id) === "icon" && id !== "Setting"
+// Standalone: only icons (and never `Setting`) may be collapsed. Spacers,
+// backgrounds, text, and sliders are excluded.
+function isCollapsible(id): boolean; // registry.kindOf(id) === "icon" && id !== "Setting"
 ```
 
 Invariants baked into the store:
 
 - **Single occurrence per viewport:** `place` / `placeInNewRow` / `collapse` first
-  drop the id from wherever it was (bar lane _or_ collapse list).
+  drop the id from wherever it was.
 - **Prune empty rows** and notify subscribers after every mutation.
-- **Setting is auto-managed** — see §3a.
-- **Persist** to `localStorage` (POC key `player-studio:region-layout`) as
-  `{ layouts, theme, active }`; sanitize + migrate the legacy flat `{ regions }`
-  shape into the `default` viewport on load. The **registry persists separately**
-  (`player-studio:registry`), so clearing a layout never wipes custom controls and
-  vice-versa.
-- **Registry-aware load:** the `registry` singleton constructs (and loads) at import
-  time, _before_ any `RegionState`, so layout sanitization can resolve custom ids.
-  On load, an id is **dropped** if `registry.get(id)` is undefined — this evicts
-  "ghost" ids (a custom control deleted while its id lingered in saved layout JSON).
-- **Delete = purge:** deleting a custom control calls `registry.removeCustom(id)`
-  **and** `state.purge(id)` (strips it from every viewport's regions + collapse),
-  so no viewport is left referencing a control that no longer exists.
+- **Setting is auto-managed** — §3a.
+- **Persist** to `localStorage` (`player-studio:region-layout`) as
+  `{ layouts, theme, active }`. The registry persists **separately**
+  (`player-studio:registry`), so clearing a layout never wipes custom controls.
+- **Registry-aware load:** the `registry` singleton constructs (and loads/seeds) at
+  import time, _before_ any `RegionState`, so layout sanitization can resolve custom
+  ids; an id whose `registry.get(id)` is undefined is **dropped** (evicts ghost ids).
+- **Delete = purge:** deleting a custom control pairs `registry.removeCustom(id)` +
+  `state.purge(id)` across all viewports.
 
 ### 3a. `reconcileSetting()` — the Setting-icon rule
 
-Runs on **every** change, on the active viewport:
+Runs on **every** change, on the active viewport: `Setting` is present iff that
+viewport's `collapse` list is non-empty (auto-added to the last bottom row's end
+lane when needed, stripped when the list empties). The user never places it by hand.
+
+### 3b. Undo / redo (`History`)
+
+[`src/history.ts`](./src/history.ts) is a combined undo/redo over **both** the
+layout and the registry, so a single logical action restores as a whole — e.g.
+adding a spacer (registry) then placing it (layout) are two steps, but each undo
+lands on a self-consistent whole.
 
 ```ts
-// Setting is mandatory iff this viewport has ≥1 collapsed icon.
-const wantSetting = layout.collapse.length > 0;
-if (wantSetting && !find("Setting")) addSettingToLastBottomRow(); // show it
-if (!wantSetting && find("Setting")) removeSetting(); // hide it
+class History {
+  constructor(registry: Snapshotable, state: Snapshotable);
+  undo(): void; redo(): void;
+  canUndo(): boolean; canRedo(): boolean;
+  subscribe(fn): () => void; // toolbar buttons enable/disable off this
+}
 ```
 
-So the `Setting` icon is **fully derived** from the collapse list: ≥1 collapsed →
-`Setting` shown on the bar; 0 → no `Setting`. The user never places it by hand
-(the palette disables that chip — §6).
+- A **snapshot** is `{ registry.snapshot(), state.snapshot() }` (both full
+  serialized forms). `undo`/`redo` `restore()` both.
+- Recording is **coalesced to one entry per microtask**: a single user action
+  commits one change event → one undo step, while a synchronous burst across both
+  stores (e.g. Reset) collapses into one. A `restoring` guard stops restores from
+  recording new entries.
+- Wired to the toolbar's **Undo / Redo** buttons and **Cmd/Ctrl+Z** (Shift or
+  Ctrl+Y to redo); keyboard is ignored while typing in a field (§7).
 
 ---
 
 ## 4. Drag & drop wiring
 
-Native HTML5 DnD. Key trick: `dataTransfer` payloads are **not readable during
-`dragover`**, so the dragged id is stashed in a module variable and read back on
-drop. (POC reference: [`src/dnd.ts`](./src/dnd.ts).)
+Native HTML5 DnD. `dataTransfer` payloads aren't readable during `dragover`, so the
+dragged id is stashed in a module variable and read back on drop. (Reference:
+[`src/dnd.ts`](./src/dnd.ts).)
 
-### 4a. Sources — palette chips, placed controls, collapsed chips
+- **Sources** — palette chips, placed controls (including spacers + backgrounds),
+  and collapsed chips are all `makeDraggable`. `endDrag()` force-clears a drag whose
+  source was rebuilt away by a re-render.
+- **Targets on the canvas** — marked with `data-drop`: `"lane"` (insert into this
+  lane at the caret) and `"gap"` (create a new row). Each lane carries
+  `data-region` / `data-row` / `data-lane`; each gap carries `data-region` /
+  `data-row`. On drop, lane → `state.place`, gap → `state.placeInNewRow`.
+- **Expanded drop targets.** While dragging (`body.dnd-active`) every lane grows
+  (bigger min-size + a dashed frame) and the hovered target gets a solid accent
+  fill, so where an item will land is obvious. A bold drop-caret marks the insert
+  point within a lane.
+- **Remove** — dragging a placed control back onto the palette removes it
+  (`makeRemoveTarget`, ignores fresh palette drags).
+- **Collapse** — dragging an icon into the Setting bin collapses it
+  (`makeCollapseTarget`; accepts bar + palette drags; rejects non-icons).
 
-```ts
-let draggingId: ControlId | null = null;
-const MIME = "application/x-player-control";
-
-function makeDraggable(
-  el: HTMLElement,
-  id: ControlId,
-  dragImage?: HTMLElement,
-) {
-  el.setAttribute("draggable", "true");
-  el.addEventListener("dragstart", (e) => {
-    draggingId = id;
-    e.dataTransfer?.setData(MIME, id);
-    e.dataTransfer!.effectAllowed = "copyMove";
-    if (dragImage) e.dataTransfer!.setDragImage(dragImage, 18, 18);
-    document.body.classList.add("dnd-active");
-  });
-  el.addEventListener("dragend", () => {
-    draggingId = null; /* clear highlight */
-  });
-}
-
-// Force-end a drag whose source element was rebuilt away by a re-render, so its
-// own `dragend` never fires (used after collapse/lane commits).
-function endDrag() {
-  draggingId = null;
-  document.body.classList.remove("dnd-active");
-}
-```
-
-Palette chips, placed controls, **and** collapsed chips in the Setting bin are all
-draggable.
-
-### 4b. Drop targets on the canvas
-
-Two target types, marked with `data-drop`:
-
-| `data-drop` | element          | meaning                                     |
-| ----------- | ---------------- | ------------------------------------------- |
-| `"lane"`    | a lane in a row  | insert into this lane at the caret position |
-| `"gap"`     | gap between rows | create a **new row** at this position       |
-
-Each lane carries `data-region`, `data-row`, `data-lane`; each gap carries
-`data-region`, `data-row`. On drop, lane → `state.place(...)`, gap →
-`state.placeInNewRow(...)`. (Unchanged from the original lane/caret logic.)
-
-### 4c. Remove (drag back to palette)
-
-```ts
-function makeRemoveTarget(panel: HTMLElement, state: RemoveTarget) {
-  panel.addEventListener("dragover", (e) => {
-    if (draggingId) e.preventDefault();
-  });
-  panel.addEventListener("drop", (e) => {
-    const id = (e.dataTransfer?.getData(MIME) ||
-      draggingId) as ControlId | null;
-    draggingId = null;
-    if (id && state.has(id)) {
-      e.preventDefault();
-      state.remove(id);
-    } // ignore fresh palette drags
-  });
-}
-```
-
-### 4d. Collapse (drag into the Setting bin)
-
-```ts
-interface CollapseTarget {
-  canCollapse(id: ControlId): boolean;
-  collapse(id: ControlId): void;
-}
-
-function makeCollapseTarget(bin: HTMLElement, target: CollapseTarget) {
-  bin.addEventListener("dragover", (e) => {
-    if (!draggingId || !target.canCollapse(draggingId)) return;
-    e.preventDefault();
-    bin.classList.add("collapse--over");
-  });
-  bin.addEventListener("dragleave", () =>
-    bin.classList.remove("collapse--over"),
-  );
-  bin.addEventListener("drop", (e) => {
-    bin.classList.remove("collapse--over");
-    const id = (e.dataTransfer?.getData(MIME) ||
-      draggingId) as ControlId | null;
-    draggingId = null;
-    if (id && target.canCollapse(id)) {
-      e.preventDefault();
-      target.collapse(id);
-    }
-  });
-}
-```
-
-`canCollapse(id) = isCollapsible(id) && !isCollapsed(id)`. Accepts drags from the
-bar **and** straight from the palette.
+> **Drop → settle → re-render.** The drop handler clears `dnd-active` **before**
+> committing the placement, because backgrounds snap to their lane's box and lanes
+> are temporarily inflated during a drag — a dropped background must measure the
+> settled lane, not the inflated one (§6g).
 
 ---
 
 ## 5. Serializer — internal model → output JSON
 
-The serializer emits each viewport's lanes directly — a row is an object keyed
-by lane — and emits its collapse list as `collapseInSetting`. (POC reference:
-[`src/modes/region/spec.ts`](./src/modes/region/spec.ts).)
+Emits each viewport's lanes directly, its collapse list as `collapseInSetting`, the
+shared `theme`, and an optional `controls` block. (Reference:
+[`src/modes/region/spec.ts`](./src/modes/region/spec.ts); the typed contract is
+[`src/modes/region/schema.ts`](./src/modes/region/schema.ts).)
 
 ### Per-row rule
 
 Walk lanes `start → center → end`; skip empty ones. Each non-empty lane becomes
-`{ items }` with its ids in order. A `fill` control (a slider — only
-`VideoProgress`) is **not** pulled out of the sequence: it stays at its position in
-`items` and is repeated in the lane's optional `fill` list, which carries only
-the stretch behavior.
+`{ items }` in order. A `fill` control (a slider — only `VideoProgress`) stays at
+its position in `items` and is repeated in the lane's optional `fill` list.
+Spacers and backgrounds stay **inline in `items`** too — the player renders them
+specially (a blank gap / a backdrop layer), but their position in the sequence is
+the layout information.
 
 ```ts
-interface LaneGroup {
-  items: ControlId[];
-  fill?: ControlId[]; // subset of items that stretch; omitted when none
-}
-type SerializedRow = Partial<Record<Lane, LaneGroup>>;
-
 function serializeRow(row: Row): SerializedRow {
-  const out: SerializedRow = {};
+  const out = {};
   for (const lane of ["start", "center", "end"] as const) {
     if (!row[lane].length) continue;
     const items = [...row[lane]];
-    const fill = items.filter(isFill);
+    const fill = items.filter(isFill); // registry.kindOf(id) === "slider"
     out[lane] = { items, ...(fill.length ? { fill } : {}) };
   }
   return out;
 }
 ```
 
-`isFill(id) = registry.kindOf(id) === "slider"` — resolved through the registry so
-custom (`icon`) and text controls are never treated as fill.
+### The `controls` block
 
-### The `controls` block (custom controls, text controls + icon overrides)
-
-`schemaVersion` 2.1 adds an optional top-level **`controls`** object, keyed by id.
-It is built by walking every id **used** anywhere across the four viewports (lanes
-**and** collapse lists) and emitting a declaration only for ids the player can't
-resolve on its own — **custom controls**, **text controls**, and **icon-overridden
-built-ins**. Stock built-ins stay id-only; the block is **omitted entirely when
-empty** (so a layout with no customs/overrides is byte-identical to the old 2.0
-output plus the version bump).
+Keyed by id, built by walking every id **used** anywhere across the four viewports
+(lanes **and** collapse lists), emitting a declaration only for ids the player
+can't resolve on its own — **custom controls** (icon/text/spacer/background),
+**icon-overridden built-ins**, **resized icons**, and **icons with a per-icon
+background**. Stock built-ins stay id-only; the block is **omitted entirely when
+empty**.
 
 ```ts
-function buildControlDecls(state: RegionState): Record<string, unknown> {
-  const used = new Set<ControlId>();
-  for (const vp of ["default", "490", "300", "200"] as const) {
-    for (const region of ["top", "center", "bottom"] as const)
-      for (const row of state.rowsOf(vp, region))
-        for (const lane of ["start", "center", "end"] as const)
-          for (const id of row[lane]) used.add(id);
-    for (const id of state.collapsedOf(vp)) used.add(id);
-  }
-
-  const out: Record<string, unknown> = {};
+function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
+  const out = {};
   for (const id of used) {
     const custom = registry.isCustom(id);
-    if (!custom && !registry.isOverridden(id)) continue; // stock built-in → id-only
+    const sized = registry.kindOf(id) === "icon" && registry.hasSize(id);
+    const hasBg = registry.hasIconBg(id); // per-icon circle/badge
+    if (!custom && !registry.isOverridden(id) && !sized && !hasBg) continue;
     const def = registry.get(id);
+    const iconBg = hasBg ? { background: registry.iconBgOf(id) } : {}; // { padding, radius }
     out[id] = custom
       ? {
           custom: true,
           kind: def?.kind ?? "icon",
           label: def?.label ?? id,
           icon: registry.iconOf(id),
-          // Text controls ride their flavour + extras so the player can render them:
-          ...(def?.textType ? { textType: def.textType } : {}),      // §6f
-          ...(def?.separator !== undefined ? { separator: def.separator } : {}),   // timeAll
-          ...(def?.variable !== undefined ? { variable: def.variable } : {}),      // dynamicText
-          ...(def?.showNumber !== undefined ? { showNumber: def.showNumber } : {}), // currentChapter
+          // text extras (§6f)
+          ...(def?.textType ? { textType: def.textType } : {}),
+          ...(def?.separator !== undefined ? { separator: def.separator } : {}),
+          ...(def?.variable !== undefined ? { variable: def.variable } : {}),
+          ...(def?.showNumber !== undefined ? { showNumber: def.showNumber } : {}),
+          // per-icon size; spacer width; lane-background padding/radius
+          ...(sized ? { size: registry.sizeOf(id) } : {}),
+          ...(def?.kind === "spacer" && def?.width !== undefined ? { width: def.width } : {}),
+          ...(def?.kind === "background" && def?.paddingX !== undefined ? { paddingX: def.paddingX } : {}),
+          ...(def?.kind === "background" && def?.paddingY !== undefined ? { paddingY: def.paddingY } : {}),
+          ...(def?.kind === "background" && def?.radius !== undefined ? { radius: def.radius } : {}),
+          ...iconBg,
         }
-      : { icon: registry.iconOf(id) }; // override → new glyph only
+      : { icon: registry.iconOf(id), ...(sized ? { size: registry.sizeOf(id) } : {}), ...iconBg };
   }
   return out;
 }
 ```
 
-A **text control** serializes like a custom control but with `kind: "text"` and a
-`textType`, plus the one extra field its flavour needs (`separator` for `timeAll`,
-`variable` for `dynamicText`, `showNumber` for `currentChapter`). The player reads
-`textType` to know what to render — see
-[`PLAYER_IMPLEMENTATION.md` §7c](./PLAYER_IMPLEMENTATION.md#7c-text-controls-the-controls-block).
+- **Background color/opacity are never per-control** — they are the shared
+  `theme.backgroundColor` / `backgroundOpacity`, applied to lane backgrounds **and**
+  per-icon backgrounds alike.
+- A **lane background** decl carries only `paddingX` / `paddingY` / `radius` (each
+  emitted only when non-default). A **spacer** carries `width`. A **per-icon
+  background** is the `background: { padding, radius }` field on the icon's decl.
 
-### Whole-document build (all four viewports)
+### Whole-document build
 
 ```ts
 function buildRegionSpec(state: RegionState) {
   const theme = state.getTheme();
-  const viewports: Record<string, unknown> = {};
+  const viewports = {};
   for (const vp of ["default", "490", "300", "200"] as const) {
-    const regions: Record<string, unknown[]> = {};
-    for (const region of ["top", "center", "bottom"] as const) {
+    const regions = {};
+    for (const region of ["top", "center", "bottom"] as const)
       regions[region] = state.rowsOf(vp, region).map(serializeRow);
-    }
     viewports[vp] = { regions, collapseInSetting: state.collapsedOf(vp) };
   }
-  const controls = buildControlDecls(state);
+  const controls = buildControlDecls(collectUsedIds(state));
   return {
-    schemaVersion: "3.0",
+    schemaVersion: "3.1",
     layoutModel: "region",
     theme: {
       primary: theme.primary,
@@ -489,6 +437,10 @@ function buildRegionSpec(state: RegionState) {
       iconSize: 22,
       barHeight: 40,
       gap: 8,
+      backgroundColor: theme.bgColor, // shared across all backgrounds
+      backgroundOpacity: theme.bgOpacity,
+      paddingX: theme.playerPadX, // player container padding
+      paddingY: theme.playerPadY,
     },
     ...(Object.keys(controls).length ? { controls } : {}), // omit when empty
     viewports,
@@ -496,259 +448,186 @@ function buildRegionSpec(state: RegionState) {
 }
 ```
 
-### Emit on every change (current target: `console.log` / code panel)
-
-```ts
-state.subscribe(() => {
-  const json = JSON.stringify(buildRegionSpec(state), null, 2);
-  console.log(json); // ← for now (the POC also shows it live in a code panel)
-  // later: PUT /api/player-layout/{id}  with this body
-});
-```
-
-This produces exactly the shape documented in
+Re-serialized and shown live in the code panel (and `console.log`) on every change;
+later a `PUT` to the layout API. This is exactly the shape in
 [`PLAYER_IMPLEMENTATION.md` §2](./PLAYER_IMPLEMENTATION.md#2-json-shape-what-the-player-receives).
 
 ---
 
-## 6. UI — palette, viewport switcher, collapse bin & icon picker
+## 6. UI — canvas, popovers, palette, toolbar
 
 ### 6a. Canvas (the player mock)
 
-Render the **active viewport's** regions so the user authors against a realistic
-preview. (POC reference: [`src/modes/region/editor.ts`](./src/modes/region/editor.ts).)
+Render the **active viewport's** regions against a realistic preview. (Reference:
+[`src/modes/region/editor.ts`](./src/modes/region/editor.ts).)
 
-```
-player (sized to the active viewport)
-├── region--top
-│   ├── row-gap (drop: gap, row 0)
-│   ├── player-row → lane--start | lane--center | lane--end   (each drop: lane)
-│   └── …
-├── region--center
-└── region--bottom
-```
+Per render: apply the theme CSS vars — `--primary`, `--secondary`, and the player
+container padding `--pad-x` / `--pad-y`; for each region emit a `gap`, each row (3
+lanes), and a trailing `gap`; an empty region shows a "Drop here" placeholder that
+is itself a `gap` target. Each placed control renders **by `kind`**:
 
-Per render: apply `--primary` / `--secondary`; for each region emit a `gap`, each
-row (3 lanes), and a trailing `gap`; an empty region shows a "Drop here"
-placeholder that is itself a `gap` target. Each placed control renders by `kind`
-(icon glyph / `00:00` text / `<input range>`) plus a `×` remove button — the icon
-branch draws `renderIcon(registry.iconOf(id))`, so overrides and custom glyphs show
-live. The canvas re-renders on **registry** changes too (not just layout), so an
-icon swap updates an already-placed control immediately.
+| kind         | rendered as                                                                 |
+| ------------ | --------------------------------------------------------------------------- |
+| `icon`       | `renderIcon(registry.iconOf(id), registry.sizeOf(id))` + optional per-icon background |
+| `text`       | the resolved `def.text` string (`00:00`, chapter title, …)                  |
+| `slider`     | a decorative `<input range>` that flex-fills                                |
+| `spacer`     | a blank stretch-height block at its `width` (§6g)                           |
+| `background` | an absolutely-positioned backdrop layer, rendered specially (§6g)           |
+
+plus a `×` remove button. The canvas re-renders on **registry** changes too (not
+just layout), so an icon swap / resize / background edit updates an already-placed
+control immediately. Between the three lanes there is **no column gap** (a filled
+`VideoProgress` butts up to its neighbours); items within a lane are spaced by
+`theme.gap`.
 
 **Volume hover-slider preview.** A placed `Volume` chip previews the player's
 on-demand slider ([`PLAYER_IMPLEMENTATION.md` §7a](./PLAYER_IMPLEMENTATION.md#7a-volume--the-hover-slider);
-POC: [`src/ui/controlbody.ts`](./src/ui/controlbody.ts) `appendVolumeFlyout`).
-Hovering the icon slides out an **inline** range (no backdrop) as a flex child
-of the chip — it takes real row space, so neighbors shift and a fill
-`VideoProgress` shrinks instead of being overlapped. Each `pointerenter`
-re-measures and sets:
+`appendVolumeFlyout` in [`src/ui/controlbody.ts`](./src/ui/controlbody.ts)):
+hovering slides out an **inline** range as a flex child (side + width measured per
+hover; it pushes neighbours and shrinks a fill slider rather than overlapping).
+It's the one interactive slider on the canvas; holding its thumb suspends the
+chip's HTML5 drag, and it's hidden entirely during DnD.
 
-- the **side** — `volume-flyout--left` / `--right` (flex `order` puts the range
-  before or after the icon), toward the player edge with ≥150px, else the
-  roomier one;
-- the **width** — `--fly-w`: 150px capped to the row's slack (free space + what
-  the fill slider can give up down to its 60px min), floor 60px.
+### 6b. Property popovers (click a placed control)
 
-It is the **one interactive slider** on the canvas (the others are decorative,
-`pointer-events: none`). Holding its thumb suspends the chip's HTML5 drag
-(`draggable="false"` until the next `pointerup`) so a slider gesture never
-becomes a chip drag, and pins the flyout open via an `is-sliding` class so it
-survives the pointer straying off the row mid-drag. During DnD
-(`body.dnd-active`) the flyout is hidden entirely so it never shifts the layout
-under a drag or blocks a drop target. The value isn't persisted — it resets on
-re-render.
+Clicking a placed control (not its remove ×, not a resize handle, not after a drag)
+opens a small anchored **popover** ([`src/ui/popover.ts`](./src/ui/popover.ts)) with
+live preview (direct DOM writes) and commit-on-release (one undo step per gesture):
 
-### 6b. Viewport switcher
+- **Icon** → **Size** slider (12–48) **and** a **Background** toggle. Enabling it
+  reveals **Padding** + **Radius** sliders for a circle/badge behind that one icon
+  (§6g). Radius renders as `min(radius, 50%)` on a square box, so a high value is a
+  perfect circle.
+- **Spacer** → a **Width** slider (like icon size); a right-edge resize handle
+  works too.
+- **Background** (lane) → **Padding X** / **Padding Y** / **Radius** sliders. Color
+  and opacity are _not_ here — they're the shared toolbar tool (§7).
 
-A segmented control above the player. Switching swaps the active design **and
-resizes the preview** so the responsive bar is visible:
+### 6c. Viewport switcher
 
-```ts
-const VIEWPORT_PX = { default: 640, "490": 490, "300": 300, "200": 200 };
-
-for (const vp of state.getViewports()) {
-  const btn = segButton(label(vp)); // "Default" · "≤490" · "≤300" · "≤200"
-  btn.onclick = () => state.setViewport(vp);
-}
-
-// in render():
-const w = VIEWPORT_PX[state.getViewport()];
-player.style.width = `${w}px`;
-player.style.height = `${Math.round((w * 9) / 16)}px`; // keep 16:9
-highlightActive(state.getViewport());
-```
-
-Each viewport keeps its own layout + collapse set, so the bar you see changes as
-you switch. `resetToDefault()` seeds only `default`; the narrow ones start blank
-(author from scratch, or leave blank to inherit on the player — see
+A segmented control above the player (`Default · ≤490 · ≤300 · ≤200`). Switching
+swaps the active design **and resizes the preview** (`VIEWPORT_PX = { default: 640,
+"490": 490, "300": 300, "200": 200 }`, kept 16:9). Each viewport keeps its own
+layout + collapse set. `resetToDefault()` seeds only `default`; the narrow ones
+start blank (author from scratch, or leave blank to inherit on the player — see
 [`PLAYER_IMPLEMENTATION.md` §3](./PLAYER_IMPLEMENTATION.md#3-viewports--choosing-which-layout-to-render)).
-
-### 6c. Collapse-in-Setting bin (left palette)
-
-Below the chips, the **left palette** hosts the collapse bin (POC reference:
-[`src/ui/palette.ts`](./src/ui/palette.ts)):
-
-```ts
-const bin = el("div", { class: "collapse-bin" }, [collapseItems]);
-makeCollapseTarget(bin, {
-  canCollapse: (id) => active.canCollapse?.(id) ?? false, // isCollapsible && !isCollapsed
-  collapse: (id) => {
-    active.collapse?.(id);
-    endDrag();
-  },
-});
-// Stop collapse drops bubbling to the panel-wide REMOVE target (same element tree).
-for (const ev of ["dragover", "dragleave", "drop"] as const)
-  bin.addEventListener(ev, (e) => e.stopPropagation());
-```
-
-- **Drop an icon here** → `collapse(id)` (works from the bar or the palette).
-  Sliders/text and `Setting` are rejected by `canCollapse`.
-- **Collapsed chips** render in the bin: each is draggable back onto a lane to
-  re-place it, and carries a `×` to `uncollapse(id)`.
-- **The `Setting` palette chip is disabled** (`managesSetting`) — it's auto-driven
-  by `reconcileSetting` (§3a), so the user can't place it manually.
-
-> The bin lives inside the palette, which is itself the remove target — hence the
-> `stopPropagation` so a collapse drop doesn't also fire "remove."
-
-> **Architecture:** the canvas editor exposes the collapse capability on its
-> `EditorInstance` (`collapsible`, `managesSetting`, `canCollapse`, `getCollapsed`,
-> `collapse`, `uncollapse`, `isCollapsed`); the shared palette renders the bin
-> against that interface, staying mode-agnostic.
 
 ### 6d. Custom controls & icon overrides (palette)
 
-The palette iterates **`registry.list()`** (built-ins ++ custom ++ text), not a
-static catalog, and rebuilds on every change so newly-added chips appear and icon
-swaps show live. Three affordances drive the registry (§2b):
+The palette iterates **`registry.list()`** (built-ins ++ custom), rebuilding on
+every change. Affordances:
 
-```ts
-// "+ Add custom control" — pick any Lucide icon, then name it.
-addBtn.onclick = async () => {
-  const icon = await pickIcon({ title: "Pick an icon for your control" }); // §6e
-  if (!icon) return;
-  const label = window.prompt("Name your control")?.trim();
-  if (label) registry.addCustom({ label, icon }); // mints a CUSTOM_<slug> id
-};
-
-// Per-chip inline actions (revealed on hover):
-changeIcon.onclick = async () => {
-  // ✎ — any chip
-  const next = await pickIcon({ current: registry.iconOf(id) });
-  if (next) registry.setIcon(id, next); // built-in → override; custom → edit
-};
-resetIcon.onclick = () => registry.resetIcon(id); // ↺ — only when overridden
-deleteChip.onclick = () => {
-  // × — only on custom chips
-  studio.active().purge?.(id); // strip from every viewport first
-  registry.removeCustom(id); // then drop the definition
-};
-```
-
-- **Change icon** works on **built-ins** (records an override) _and_ **custom**
-  controls (edits the def). An overridden built-in shows a **reset** (↺) action.
-- **Delete** is custom-only and always pairs `purge` + `removeCustom` (§3).
-- Action buttons `stopPropagation` on `pointerdown`/`click` so clicking one never
-  starts a chip drag.
+- **"+ Add custom control"** — `pickIcon` (§6e) + a name → `registry.addCustom`.
+- Per-chip inline actions: **change icon** (built-in → override; custom → edit),
+  **reset** an override (↺), **delete** a custom (× — pairs `purge` + `removeCustom`).
+- The **Setting** chip is disabled (`managesSetting`); it's auto-driven by
+  `reconcileSetting` (§3a). Spacer/background chips skip the change-icon action
+  (their glyph is cosmetic).
 
 ### 6e. Icon picker (`pickIcon`)
 
-A modal over the full Lucide catalog (POC reference:
-[`src/ui/iconpicker.ts`](./src/ui/iconpicker.ts)). `iconNames()` (~1958 names) feeds
-a searchable swatch grid; the search normalizes case + punctuation so "full screen"
-matches `Fullscreen`, and only the first ~240 matches render (refine to narrow).
-`pickIcon(opts?): Promise<string | null>` resolves the chosen **Lucide name** (never
-raw SVG) or `null` on cancel. Used by both "Add control" and "Change icon".
+A modal over the full Lucide catalog ([`src/ui/iconpicker.ts`](./src/ui/iconpicker.ts));
+`pickIcon(opts?): Promise<string | null>` resolves the chosen Lucide **name**. Used
+by "Add custom control" and "Change icon".
 
 ### 6f. Text controls ("+ Add text")
 
-A second creator button next to "Add custom control". It opens the **text picker**
-([`src/ui/textpicker.ts`](./src/ui/textpicker.ts)) — a small modal listing the seven
-text flavours — and, on pick, calls `registry.addText(descriptor)`, which mints a
-`kind: "text"` control ([`src/controls.ts`](./src/controls.ts) `TextType`):
+Opens the **text picker** ([`src/ui/textpicker.ts`](./src/ui/textpicker.ts)) and, on
+pick, calls `registry.addText(descriptor)` (a `kind: "text"` control):
 
-| flavour          | id form       | preview      | extra input the picker collects        |
-| ---------------- | ------------- | ------------ | -------------------------------------- |
-| Time Left        | `CUSTOM_*`    | `00:00`      | —                                      |
-| Time Consumed    | `CUSTOM_*`    | `00:00`      | —                                      |
-| Time Duration    | `CUSTOM_*`    | `00:00`      | —                                      |
-| Time All         | `CUSTOM_*`    | `00:00 / 00:00` | **separator** text (default `" / "`) |
-| Current Chapter  | `CUSTOM_*`    | `Chapter Name` | **switch** — append the `02/14` number |
-| Dynamic Text     | `cdt_<name>`  | `cdt_<name>` | **variable** name (auto-prefixed `cdt_`) |
-| Title            | `CUSTOM_*`    | `Video Title` | —                                     |
+| flavour          | id form      | preview         | extra input                              |
+| ---------------- | ------------ | --------------- | ---------------------------------------- |
+| Time Left        | `CUSTOM_*`   | `00:00`         | —                                        |
+| Time Consumed    | `CUSTOM_*`   | `00:00`         | —                                        |
+| Time Duration    | `CUSTOM_*`   | `00:00`         | —                                        |
+| Time All         | `CUSTOM_*`   | `00:00 / 00:00` | **separator** (default `" / "`)          |
+| Current Chapter  | `CUSTOM_*`   | `Chapter Name`  | **switch** — append the `02/14` number   |
+| Dynamic Text     | `cdt_<name>` | `cdt_<name>`    | **variable** name (auto-prefixed `cdt_`) |
+| Title            | `CUSTOM_*`   | `Video Title`   | —                                        |
 
-```ts
-// "+ Add text" — pick a flavour, then (for two of them) an extra field.
-addTextBtn.onclick = async () => {
-  const desc = await pickText();      // { textType, separator? | variable? | showNumber? }
-  if (desc) registry.addText(desc);   // → CUSTOM_* / cdt_* text control
-};
-```
+Text chips render an **icon** in the palette but a **text** string on the canvas, so
+they never collapse into Setting (icon-only). Dynamic Text is keyed by its
+`cdt_`-prefixed variable (both id and SDK handle). Each is serialized with its
+`textType` + extras (§5), rendered player-side by `textType`
+([`PLAYER_IMPLEMENTATION.md` §7c](./PLAYER_IMPLEMENTATION.md#7c-text-controls)).
 
-- All chips render an **icon** in the palette (as the old built-in time chips did)
-  but a **text** string on the canvas (`registry`-resolved `def.text`), so they never
-  collapse into Setting (icon-only, §6c).
-- The default layout ships one of these for free: a seeded **Time Consumed** text
-  control (`CUSTOM_time_consumed`) via `registry.seedDefaults()` (§2b) — the
-  `addText`-built stand-in for the removed `TimeConsumed` built-in.
-- **Time controls** always preview `00:00`; only **Time All** takes user input (its
-  `separator`). **Current Chapter** shows the chapter title as text, with a **switch**
-  to append the `02/14` position status (`showNumber`).
-- **Dynamic Text** is keyed by a `cdt_`-prefixed **variable** — both its id and the
-  handle the player/SDK fills at load. The picker keeps the user's casing, strips
-  non-identifier characters, and prefixes `cdt_` if missing;
-  `normalizeVariable` is shared with the picker's live preview so what you see is
-  what's stored.
-- Each is serialized into the `controls` block with its `textType` + extras (§5) and
-  rendered player-side by `textType`
-  ([`PLAYER_IMPLEMENTATION.md` §7c](./PLAYER_IMPLEMENTATION.md#7c-text-controls-the-controls-block)).
+### 6g. Spacers & backgrounds
+
+Two one-click creator buttons — **"+ Add spacer"** and **"+ Add background"**. Both
+mint a `CUSTOM_*` control and appear as normal draggable chips.
+
+- **Spacer** (`addSpacer`, `kind: "spacer"`) — a blank block that stretches to the
+  lane/row height and adds horizontal space (default `width` 24px). Resize it by
+  dragging its right edge, or click it for a **Width** slider (§6b). Serializes as
+  `{ custom, kind: "spacer", label, icon, width }`.
+- **Background** (`addBackground`, `kind: "background"`) — a translucent color layer
+  behind a lane's controls. Dropped into a lane's items array like any control, it
+  renders as an absolutely-positioned layer that:
+  - **snaps horizontally** to that lane's controls (their box + `paddingX`), so it
+    hugs exactly the icons in the lane (and re-snaps wider as controls are added);
+  - **fills the full row height** vertically (+ `paddingY`);
+  - sits **behind** the lane's items (lanes carry a higher z-index);
+  - is colored from the shared `theme.backgroundColor` / `backgroundOpacity` and
+    rounded by its own `radius`.
+
+  Click it for **Padding X / Padding Y / Radius** (§6b). Serializes as
+  `{ custom, kind: "background", label, icon, paddingX?, paddingY?, radius? }`
+  (padding/radius only when non-default; **no** per-control color/width).
+
+- **Per-icon background** (registry `setIconBg`) is the _other_ way to get a
+  backdrop: a circle/badge drawn directly behind **one icon**, hugging just that
+  glyph regardless of lane spacers or row height. Toggle it in the icon popover
+  (§6b); it serializes as the icon decl's `background: { padding, radius }`. Use a
+  **lane background** for a wide segment backdrop; a **per-icon background** for a
+  circle behind a single button (e.g. the transport Play/Backward/Forward circles).
 
 ---
 
-## 7. Toolbar (theme + reset)
+## 7. Toolbar (theme, background, padding, undo/redo, reset)
 
-- **Primary / Secondary** color pickers → `state.setTheme({ primary | secondary })`
-  (global — affects all viewports).
-- **Reset** → `state.resetToDefault()` (seeds the canonical `default` viewport, and
-  re-creates the seeded `CUSTOM_time_consumed` text control it references — §2b).
-  Layout/theme only — **user custom controls and icon overrides survive** (they live
-  in the separately-persisted registry, §2b).
-- **Clear** → `state.clear()` (empties the **active** viewport only).
+Rendered by [`src/ui/toolbar.ts`](./src/ui/toolbar.ts):
+
+- **Undo / Redo** — `history.undo()` / `redo()`, enabled off `canUndo/canRedo`
+  (§3b); also Cmd/Ctrl+Z and Shift/Ctrl+Y.
+- **Primary / Secondary** color pickers → `state.setTheme({ primary | secondary })`.
+- **Background** — a shared color swatch + opacity slider →
+  `state.setTheme({ bgColor, bgOpacity })`. Drives **every** background (lane +
+  per-icon) at once; previews live, commits on release (one undo step).
+- **Padding** — opens a popover with **Padding X / Padding Y** sliders for the
+  `.Player` container → `state.setTheme({ playerPadX | playerPadY })`.
+- **Reset** → `state.resetToDefault()` — restores the full canonical default
+  (registry seed + default viewport + default theme, incl. the transport circles).
+- **Clear all** → `state.clear()` (empties the **active** viewport only).
 
 ---
 
 ## 8. Build order / checklist
 
 - [ ] `RegionState` with per-viewport `Layouts` + active pointer + the API in §3
-      (single-occurrence, prune-empty, persist + legacy migration).
-- [ ] `reconcileSetting()` on every change — derive the `Setting` icon from the
-      collapse list (§3a).
-- [ ] `ControlRegistry` singleton: 17 built-ins + custom/text controls + icon
-      overrides, persisted to `player-studio:registry`; `Studio` re-emits on its
-      changes (§2b). `seedDefaults()` on fresh install + reset creates the
-      `CUSTOM_time_consumed` text control the default layout references (§2b).
-- [ ] Palette iterates `registry.list()` (built-ins + custom + text), each
-      `makeDraggable`; disable the `Setting` chip; per-chip change-icon / reset /
-      delete (§6d).
-- [ ] "Add custom control" + `pickIcon` modal over the Lucide catalog (§6d/§6e).
-- [ ] "Add text" + `pickText` modal → `registry.addText`; collect the separator /
-      variable / show-number input per flavour (§6f).
-- [ ] Canvas: regions → gaps + rows → 3 lanes with `data-drop`; lane/gap drops;
-      icons via `registry.iconOf`; re-render on registry changes (§6a).
-- [ ] Volume hover-slider preview: inline flyout with per-hover side + width,
-      interactive thumb that suspends the chip drag, hidden during DnD (§6a).
-- [ ] Viewport switcher: `setViewport` + resize the preview (§6b).
-- [ ] Collapse bin in the left palette: `makeCollapseTarget` + collapsed chips +
-      `stopPropagation` vs the remove target (§6c).
-- [ ] Delete a custom control → `state.purge(id)` across all viewports + drop ghost
-      ids on load (§3).
-- [ ] `serializeRow` + `buildControlDecls` + `buildRegionSpec` over all four
-      viewports → `schemaVersion` 3.0, `controls` omitted when empty, text controls
-      emit `textType` + extras (§5).
-- [ ] `state.subscribe` → `console.log(JSON)` / code panel (swap for API later).
-- [ ] Verify output validates against `player.schema.json` and round-trips through
-      the player ([`PLAYER_IMPLEMENTATION.md` §9c](./PLAYER_IMPLEMENTATION.md#9c-full-document-the-canonical-fixture)),
-      including a custom control + override ([§9d](./PLAYER_IMPLEMENTATION.md#9d-with-a-custom-control--an-icon-override))
-      and text controls ([§9e](./PLAYER_IMPLEMENTATION.md#9e-with-text-controls-time-all--dynamic-text)).
+      (single-occurrence, prune-empty, persist). Theme carries background
+      color/opacity + player padding. `snapshot`/`restore` for undo (§3b).
+- [ ] `reconcileSetting()` on every change (§3a).
+- [ ] `ControlRegistry`: 17 built-ins + custom (icon/text/spacer/background) +
+      overrides + per-icon sizes + per-icon backgrounds, persisted to
+      `player-studio:registry`; `snapshot`/`restore`; `seedDefaults()` builds the
+      full default look on fresh install + reset (§2b).
+- [ ] `History` combining registry + state snapshots, microtask-coalesced; wire
+      Undo/Redo buttons + Cmd/Ctrl+Z (§3b).
+- [ ] Palette iterates `registry.list()`; "+ Add custom / text / spacer /
+      background"; per-chip change-icon / reset / delete; disable `Setting` (§6d–g).
+- [ ] Canvas: regions → gaps + rows → 3 lanes with `data-drop`; render by kind
+      (icon+size+iconBg / text / slider / spacer / lane-background); no inter-lane
+      gap; re-render on registry changes (§6a).
+- [ ] Property popovers: icon (size + background), spacer (width), background
+      (padding X/Y + radius) — live preview + commit-on-release (§6b).
+- [ ] Expanded drop targets while dragging; clear `dnd-active` before the drop
+      re-render so backgrounds snap to the settled lane (§4, §6g).
+- [ ] Toolbar: shared Background color/opacity, Padding tool, Undo/Redo (§7).
+- [ ] Viewport switcher + resize (§6c). Collapse bin (§3a).
+- [ ] `serializeRow` + `buildControlDecls` + `buildRegionSpec` →
+      `schemaVersion` "3.1"; theme with background* + padding*; decls carry
+      `size` / spacer `width` / background `paddingX/paddingY/radius` / per-icon
+      `background`; `controls` omitted when empty (§5).
+- [ ] `state.subscribe` → code panel / `console.log` (swap for API later).
+- [ ] Verify the default output round-trips through the player
+      ([`PLAYER_IMPLEMENTATION.md` §9c](./PLAYER_IMPLEMENTATION.md#9c-full-document-the-canonical-fixture)).

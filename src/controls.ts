@@ -39,10 +39,17 @@ export type GridIdentifier = BuiltinId;
 // The `(string & {})` keeps autocomplete for the built-ins while allowing customs.
 export type ControlId = BuiltinId | (string & {});
 
-// icon   — a single Lucide glyph (most controls)
-// text   — a HH:MM style readout (the Time controls)
-// slider — a horizontal range that fills available width (VideoProgress only)
-export type ControlKind = "icon" | "text" | "slider";
+// icon       — a single Lucide glyph (most controls)
+// text       — a HH:MM style readout (the Time controls)
+// slider     — a horizontal range that fills available width (VideoProgress only)
+// spacer     — a blank block that adds horizontal space between controls
+// background — a color layer rendered behind a row's controls
+export type ControlKind = "icon" | "text" | "slider" | "spacer" | "background";
+
+const KINDS = new Set<string>(["icon", "text", "slider", "spacer", "background"]);
+export function isControlKind(v: unknown): v is ControlKind {
+  return typeof v === "string" && KINDS.has(v);
+}
 
 // The flavours of user-addable TEXT control (the "+ Add text" flow). The four
 // time readouts always show 00:00 (timeAll joins two with a separator); the rest
@@ -68,11 +75,51 @@ export interface ControlDef {
   separator?: string; // TimeAll only — glue between the two readouts (default " / ")
   variable?: string; // Dynamic Text only — the cdt_ variable name passed to the SDK
   showNumber?: boolean; // Current Chapter only — append the "02/14" number status
+  // Spacer / background extras:
+  width?: number; // px width (background: undefined = span the full row)
+  color?: string; // background only — fill hex, e.g. "#000000"
+  opacity?: number; // background only — 0–1
+  paddingX?: number; // background only — px the layer extends beyond the row left+right
+  paddingY?: number; // background only — px the layer extends beyond the row top+bottom
+  radius?: number; // background only — border-radius px (all corners)
   // Grid mode only: cells consumed on first drop, and the horizontal resize cap
   // (Number.POSITIVE_INFINITY = to the grid edge). Ignored by region/free modes.
   defaultSpan: number;
   maxSpan: number;
 }
+
+// Sizing/appearance defaults shared by the renderer, registry, and inspectors.
+export const DEFAULT_ICON_SIZE = 20;
+export const ICON_SIZE_MIN = 12;
+export const ICON_SIZE_MAX = 48;
+
+// Per-icon background: a shape rendered directly behind a single icon (e.g. a
+// circle behind Play). Distinct from the "background" CONTROL element that
+// snaps to a whole lane — this one hugs just its icon's box. Color/opacity come
+// from the shared theme (theme.bgColor / bgOpacity); only shape is per-icon.
+export interface IconBg {
+  padding: number; // px around the icon, both axes (keeps the box square → circle)
+  radius: number; // border-radius px, rendered as min(radius, 50%) so a high value = circle
+}
+export const DEFAULT_ICON_BG_PADDING = 6;
+export const DEFAULT_ICON_BG_RADIUS = 24;
+export const ICON_BG_PADDING_MAX = 24;
+export const ICON_BG_RADIUS_MAX = 40;
+export const DEFAULT_SPACER_WIDTH = 24;
+export const SPACER_WIDTH_MIN = 8;
+export const SPACER_WIDTH_MAX = 600;
+export const BG_WIDTH_MIN = 40;
+export const DEFAULT_BG_COLOR = "#000000";
+export const DEFAULT_BG_OPACITY = 0.5;
+// A background hugs its lane's controls plus this much padding by default.
+export const DEFAULT_BG_PADDING_X = 2; // left + right
+export const DEFAULT_BG_PADDING_Y = 4; // top + bottom
+export const BG_PADDING_MAX = 40;
+export const DEFAULT_BG_RADIUS = 4;
+export const BG_RADIUS_MAX = 24;
+// Padding of the whole .Player container (global, both axes), user-adjustable.
+export const DEFAULT_PLAYER_PADDING = 10;
+export const PLAYER_PADDING_MAX = 40;
 
 const INF = Number.POSITIVE_INFINITY;
 

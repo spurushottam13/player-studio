@@ -1,4 +1,4 @@
-// Region mode native spec (spec.md): schemaVersion 3.0, layoutModel "region".
+// Region mode native spec (spec.md): schemaVersion 3.1, layoutModel "region".
 // Generated directly from the native region state (exact, not derived). `regions`
 // live under per-viewport entries (default | 490 | 300 | 200); each viewport also
 // carries its `collapseInSetting` icon list. Theme is shared across viewports.
@@ -52,13 +52,18 @@ function collectUsedIds(state: RegionState): Set<ControlId> {
 }
 
 // Declarations for used controls that a renderer can't resolve on its own.
-// Custom → full declaration; overridden built-in → just the new glyph name.
+// Custom → full declaration; overridden and/or resized built-in → just the
+// glyph name plus the per-control icon size when set.
 function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const id of used) {
     const custom = registry.isCustom(id);
-    if (!custom && !registry.isOverridden(id)) continue;
+    const sized = registry.kindOf(id) === "icon" && registry.hasSize(id);
+    const hasBg = registry.hasIconBg(id); // per-icon circle/badge
+    if (!custom && !registry.isOverridden(id) && !sized && !hasBg) continue;
     const def = registry.get(id);
+    // The per-icon background shape (color/opacity are the shared theme).
+    const iconBg = hasBg ? { background: registry.iconBgOf(id) } : {};
     out[id] = custom
       ? {
           custom: true,
@@ -72,8 +77,16 @@ function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
           ...(def?.separator !== undefined ? { separator: def.separator } : {}),
           ...(def?.variable !== undefined ? { variable: def.variable } : {}),
           ...(def?.showNumber !== undefined ? { showNumber: def.showNumber } : {}),
+          // Icon size override; spacer width; background padding/radius.
+          // Background color+opacity are shared (theme), never per-control.
+          ...(sized ? { size: registry.sizeOf(id) } : {}),
+          ...(def?.kind === "spacer" && def?.width !== undefined ? { width: def.width } : {}),
+          ...(def?.kind === "background" && def?.paddingX !== undefined ? { paddingX: def.paddingX } : {}),
+          ...(def?.kind === "background" && def?.paddingY !== undefined ? { paddingY: def.paddingY } : {}),
+          ...(def?.kind === "background" && def?.radius !== undefined ? { radius: def.radius } : {}),
+          ...iconBg,
         }
-      : { icon: registry.iconOf(id) };
+      : { icon: registry.iconOf(id), ...(sized ? { size: registry.sizeOf(id) } : {}), ...iconBg };
   }
   return out;
 }
@@ -88,9 +101,23 @@ export function buildRegionSpec(state: RegionState) {
   }
   const controls = buildControlDecls(collectUsedIds(state));
   return {
-    schemaVersion: "3.0",
+    // 3.1: adds spacer/background control kinds, per-control size/width/padding/
+    // radius decl fields, and shared theme.backgroundColor/backgroundOpacity.
+    schemaVersion: "3.1",
     layoutModel: "region" as const,
-    theme: { primary: theme.primary, secondary: theme.secondary, iconSize: 22, barHeight: 40, gap: 8 },
+    theme: {
+      primary: theme.primary,
+      secondary: theme.secondary,
+      iconSize: 22,
+      barHeight: 40,
+      gap: 8,
+      // Shared across all background layers.
+      backgroundColor: theme.bgColor,
+      backgroundOpacity: theme.bgOpacity,
+      // Padding of the whole player container (px).
+      paddingX: theme.playerPadX,
+      paddingY: theme.playerPadY,
+    },
     // Omit when empty so default layouts stay byte-for-byte as before.
     ...(Object.keys(controls).length ? { controls } : {}),
     viewports,

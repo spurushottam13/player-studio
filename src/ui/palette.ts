@@ -58,6 +58,17 @@ export function createPalette(studio: Studio): HTMLElement {
   });
   panel.append(addTextBtn);
 
+  // "+ Add spacer" — a blank block that adds horizontal space between controls.
+  // "+ Add background" — a color layer behind a row's controls. Neither needs a
+  // picker: width / color / opacity are edited in-canvas on the placed element.
+  const addSpacerBtn = el("button", { class: "btn add-control-btn", text: "+ Add spacer" });
+  addSpacerBtn.addEventListener("click", () => registry.addSpacer());
+  panel.append(addSpacerBtn);
+
+  const addBgBtn = el("button", { class: "btn add-control-btn", text: "+ Add background" });
+  addBgBtn.addEventListener("click", () => registry.addBackground());
+  panel.append(addBgBtn);
+
   const list = el("div", { class: "chip-list" });
   const dragImages = el("div", { class: "drag-image-holder" });
   panel.append(list, dragImages);
@@ -111,12 +122,16 @@ export function createPalette(studio: Studio): HTMLElement {
       chip.dataset.id = id;
 
       const actions = el("div", { class: "chip-actions" });
-      actions.append(
-        actionBtn("chip-act--icon", "Change icon", "✎", async () => {
-          const next = await pickIcon({ title: `Change icon — ${def.label}`, current: registry.iconOf(id) });
-          if (next) registry.setIcon(id, next);
-        }),
-      );
+      // Spacers/backgrounds render as blank blocks — their chip glyph is
+      // cosmetic, so no "change icon" action.
+      if (def.kind !== "spacer" && def.kind !== "background") {
+        actions.append(
+          actionBtn("chip-act--icon", "Change icon", "✎", async () => {
+            const next = await pickIcon({ title: `Change icon — ${def.label}`, current: registry.iconOf(id) });
+            if (next) registry.setIcon(id, next);
+          }),
+        );
+      }
       if (registry.isOverridden(id)) {
         actions.append(actionBtn("chip-act--reset", "Reset to default icon", "↺", () => registry.resetIcon(id)));
       }

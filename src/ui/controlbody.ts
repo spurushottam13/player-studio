@@ -3,6 +3,7 @@
 // regardless of how it is positioned. The icon branch resolves through the registry
 // so custom controls and icon overrides render live.
 
+import { DEFAULT_SPACER_WIDTH } from "../controls";
 import type { ControlDef, ControlId } from "../controls";
 import { renderIcon } from "../icons";
 import { registry } from "../registry";
@@ -20,8 +21,14 @@ export function appendControlBody(ctrl: HTMLElement, def: ControlDef): void {
   } else if (def.kind === "text") {
     ctrl.classList.add("placed-control--text");
     ctrl.append(el("span", { class: "control-text", text: def.text ?? "00:00" }));
+  } else if (def.kind === "spacer") {
+    // Blank block: width from its def, full lane height via CSS align-self.
+    ctrl.classList.add("placed-control--spacer");
+    ctrl.style.width = `${def.width ?? DEFAULT_SPACER_WIDTH}px`;
   } else {
-    ctrl.append(renderIcon(registry.iconOf(def.id), 20));
+    // Backgrounds never reach here (the region editor renders them as row
+    // layers), so the fallback stays the icon branch.
+    ctrl.append(renderIcon(registry.iconOf(def.id), registry.sizeOf(def.id)));
     if (def.id === "Volume") appendVolumeFlyout(ctrl);
   }
 }
