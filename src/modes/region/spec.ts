@@ -1,6 +1,6 @@
 // Region mode native spec (spec.md): schemaVersion 3.1, layoutModel "region".
 // Generated directly from the native region state (exact, not derived). `regions`
-// live under per-viewport entries (default | 490 | 300 | 200); each viewport also
+// live under per-viewport entries (default | 490 | 300 | vertical); each viewport also
 // carries its `collapseInSetting` icon list. Theme is shared across viewports.
 //
 // schemaVersion 3.0 replaces the ordered `align` group array with a lane-keyed
@@ -13,7 +13,7 @@
 import type { ControlId } from "../../controls";
 import { isFill, registry } from "../../registry";
 import { LANES, REGION_NAMES, VIEWPORTS } from "./state";
-import type { Lane, RegionState, Row } from "./state";
+import type { Lane, RegionState, Row, Viewport } from "./state";
 
 interface LaneGroup {
   items: ControlId[];
@@ -51,19 +51,17 @@ function collectUsedIds(state: RegionState): Set<ControlId> {
   return ids;
 }
 
-// Declarations for used controls that a renderer can't resolve on its own.
-// Custom → full declaration; overridden and/or resized built-in → just the
-// glyph name plus the per-control icon size when set.
+// Declarations for used controls that a renderer can't resolve on its own —
+// IDENTITY only (custom kind/label/icon/text + spacer width + lane-background
+// padding/radius), plus an icon override's replacement glyph. Per-icon size and
+// per-icon background are per-VIEWPORT and emitted in each viewport's `styles`
+// (see buildViewportStyles), not here.
 function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const id of used) {
     const custom = registry.isCustom(id);
-    const sized = registry.kindOf(id) === "icon" && registry.hasSize(id);
-    const hasBg = registry.hasIconBg(id); // per-icon circle/badge
-    if (!custom && !registry.isOverridden(id) && !sized && !hasBg) continue;
+    if (!custom && !registry.isOverridden(id)) continue;
     const def = registry.get(id);
-    // The per-icon background shape (color/opacity are the shared theme).
-    const iconBg = hasBg ? { background: registry.iconBgOf(id) } : {};
     out[id] = custom
       ? {
           custom: true,
@@ -77,16 +75,36 @@ function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
           ...(def?.separator !== undefined ? { separator: def.separator } : {}),
           ...(def?.variable !== undefined ? { variable: def.variable } : {}),
           ...(def?.showNumber !== undefined ? { showNumber: def.showNumber } : {}),
-          // Icon size override; spacer width; background padding/radius.
-          // Background color+opacity are shared (theme), never per-control.
-          ...(sized ? { size: registry.sizeOf(id) } : {}),
+          // Spacer width; lane-background padding/radius (unique CUSTOM_* ids, so
+          // per-instance already). Background color+opacity are shared (theme).
           ...(def?.kind === "spacer" && def?.width !== undefined ? { width: def.width } : {}),
           ...(def?.kind === "background" && def?.paddingX !== undefined ? { paddingX: def.paddingX } : {}),
           ...(def?.kind === "background" && def?.paddingY !== undefined ? { paddingY: def.paddingY } : {}),
           ...(def?.kind === "background" && def?.radius !== undefined ? { radius: def.radius } : {}),
-          ...iconBg,
         }
-      : { icon: registry.iconOf(id), ...(sized ? { size: registry.sizeOf(id) } : {}), ...iconBg };
+      : { icon: registry.iconOf(id) };
+  }
+  return out;
+}
+
+// Per-viewport icon appearance overrides: for each icon id PLACED in this viewport
+// (bar or Setting) that has a non-default size or a per-icon background, emit
+// { size?, background? }. Keyed by id; omitted when empty.
+function buildViewportStyles(state: RegionState, vp: Viewport): Record<string, unknown> {
+  const used = new Set<ControlId>();
+  for (const region of REGION_NAMES)
+    for (const row of state.rowsOf(vp, region)) for (const lane of LANES) for (const id of row[lane]) used.add(id);
+  for (const id of state.collapsedOf(vp)) used.add(id);
+
+  const styles = state.stylesOf(vp);
+  const out: Record<string, unknown> = {};
+  for (const id of used) {
+    const s = styles[id];
+    if (!s || (s.size === undefined && !s.iconBg)) continue;
+    out[id] = {
+      ...(s.size !== undefined ? { size: s.size } : {}),
+      ...(s.iconBg ? { background: s.iconBg } : {}),
+    };
   }
   return out;
 }
@@ -97,7 +115,12 @@ export function buildRegionSpec(state: RegionState) {
   for (const vp of VIEWPORTS) {
     const regions: Record<string, unknown[]> = {};
     for (const region of REGION_NAMES) regions[region] = state.rowsOf(vp, region).map(serializeRow);
-    viewports[vp] = { regions, collapseInSetting: state.collapsedOf(vp) };
+    const styles = buildViewportStyles(state, vp);
+    viewports[vp] = {
+      regions,
+      collapseInSetting: state.collapsedOf(vp),
+      ...(Object.keys(styles).length ? { styles } : {}),
+    };
   }
   const controls = buildControlDecls(collectUsedIds(state));
   return {

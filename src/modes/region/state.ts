@@ -1,4 +1,4 @@
-// Region mode state: a layout per VIEWPORT (default | 490 | 300 | 200). Each
+// Region mode state: a layout per VIEWPORT (default | 490 | 300 | vertical). Each
 // viewport is regions (top | center | bottom) → rows (stacked) → lanes
 // (start | center | end), each an ordered list of control ids, PLUS a
 // `collapse` list of icon ids folded into the Setting menu. A control appears at
@@ -6,17 +6,26 @@
 // pruned. The Setting icon's presence in a viewport is fully derived from that
 // viewport's collapse list (see reconcileSetting). See spec.md.
 
-import type { ControlId } from "../../controls";
+import {
+  DEFAULT_ICON_SIZE,
+  ICON_BG_PADDING_MAX,
+  ICON_BG_RADIUS_MAX,
+  ICON_SIZE_MAX,
+  ICON_SIZE_MIN,
+} from "../../controls";
+import type { ControlId, IconBg } from "../../controls";
 import { DEFAULT_CONTROL_IDS, registry } from "../../registry";
 import { DEFAULT_THEME } from "../types";
 import type { Theme } from "../types";
 
 export type Lane = "start" | "center" | "end";
 export type RegionName = "top" | "center" | "bottom";
-export type Viewport = "default" | "490" | "300" | "200";
+// `vertical` is a portrait 9:16 design (orientation, not a width breakpoint);
+// `default | 490 | 300` are landscape max-width breakpoints.
+export type Viewport = "default" | "490" | "300" | "vertical";
 export const REGION_NAMES: readonly RegionName[] = ["top", "center", "bottom"];
 export const LANES: readonly Lane[] = ["start", "center", "end"];
-export const VIEWPORTS: readonly Viewport[] = ["default", "490", "300", "200"];
+export const VIEWPORTS: readonly Viewport[] = ["default", "490", "300", "vertical"];
 
 export interface Row {
   start: ControlId[];
@@ -25,10 +34,20 @@ export interface Row {
 }
 export type Regions = Record<RegionName, Row[]>;
 
-// One viewport's design: the placed regions plus the icons collapsed into Setting.
+// Per-placed-icon appearance, scoped to ONE viewport. Keyed by control id inside
+// a ViewportLayout, so the SAME built-in icon (e.g. Forward) can look different in
+// `default` vs `vertical`. A plain object (not a Map) so the layout stays JSON-safe.
+export interface IconStyle {
+  size?: number; // px; absent = theme default (DEFAULT_ICON_SIZE)
+  iconBg?: IconBg; // circle/badge behind the glyph; absent = none
+}
+
+// One viewport's design: the placed regions, the icons collapsed into Setting, and
+// its per-icon appearance overrides (size / background) — all viewport-local.
 export interface ViewportLayout {
   regions: Regions;
   collapse: ControlId[];
+  styles: Record<string, IconStyle>; // keyed by control id
 }
 type Layouts = Record<Viewport, ViewportLayout>;
 
@@ -56,10 +75,10 @@ function emptyRegions(): Regions {
   return { top: [], center: [], bottom: [] };
 }
 function emptyLayout(): ViewportLayout {
-  return { regions: emptyRegions(), collapse: [] };
+  return { regions: emptyRegions(), collapse: [], styles: {} };
 }
 function emptyLayouts(): Layouts {
-  return { default: emptyLayout(), "490": emptyLayout(), "300": emptyLayout(), "200": emptyLayout() };
+  return { default: emptyLayout(), "490": emptyLayout(), "300": emptyLayout(), vertical: emptyLayout() };
 }
 function defaultRegions(): Regions {
   const D = DEFAULT_CONTROL_IDS;
@@ -84,11 +103,43 @@ function defaultRegions(): Regions {
     ],
   };
 }
-// Reset seeds only the default viewport with the canonical layout (Speed +
-// CaptionSearch folded into Setting); narrow viewports start blank.
+// The `vertical` (portrait 9:16) default: backgrounds behind Volume/FullScreen up
+// top, a stacked center column of badged icons around a big Play, and progress +
+// Time Left along the bottom. Shares the seeded custom backgrounds with `default`.
+function verticalRegions(): Regions {
+  const D = DEFAULT_CONTROL_IDS;
+  return {
+    top: [emptyRow({ start: [D.bgTopLeft, "Volume"], end: ["FullScreen", D.bgBottom] })],
+    center: [
+      emptyRow({ end: [D.bg5, "Captions"] }),
+      emptyRow({ center: ["PlayNPause"], end: [D.bg4, "CaptionSearch"] }),
+      emptyRow({ end: ["SaveVideoOffline", D.bgTopRight] }),
+    ],
+    bottom: [emptyRow({ start: ["VideoProgress"], end: [D.timeLeft] })],
+  };
+}
+
+// Reset seeds the `default` viewport (Speed + CaptionSearch folded into Setting) and
+// the portrait `vertical` viewport, plus each viewport's transport-icon look
+// (per-viewport `styles`). The `490` / `300` viewports start blank.
 function defaultLayouts(): Layouts {
   const l = emptyLayouts();
-  l.default = { regions: defaultRegions(), collapse: ["Speed", "CaptionSearch"] };
+  l.default = {
+    regions: defaultRegions(),
+    collapse: ["Speed", "CaptionSearch"],
+    styles: {
+      Backward: { size: 30, iconBg: { padding: 10, radius: 24 } },
+      PlayNPause: { size: 48, iconBg: { padding: 10, radius: 40 } },
+      Forward: { size: 30, iconBg: { padding: 10, radius: 24 } },
+    },
+  };
+  l.vertical = {
+    regions: verticalRegions(),
+    collapse: [],
+    styles: {
+      PlayNPause: { size: 48, iconBg: { padding: 6, radius: 11 } },
+    },
+  };
   return l;
 }
 const clamp = (v: number, min: number, max: number) =>
@@ -228,6 +279,10 @@ export class RegionState {
         layout.collapse.splice(ci, 1);
         touched = true;
       }
+      if (layout.styles[id]) {
+        delete layout.styles[id];
+        touched = true;
+      }
       pruneRegions(layout.regions);
     }
     if (touched) this.changed();
@@ -260,6 +315,57 @@ export class RegionState {
     if (i === -1) return false;
     list.splice(i, 1);
     return true;
+  }
+
+  // ---- per-viewport icon appearance (size + background) ------------------
+  // All reads/writes below target the ACTIVE viewport, so the same built-in icon
+  // can be styled differently per viewport. Non-mutating cross-viewport reads for
+  // serialization go through stylesOf(vp).
+  sizeOf(id: ControlId): number {
+    return this.active().styles[id]?.size ?? DEFAULT_ICON_SIZE;
+  }
+  hasSize(id: ControlId): boolean {
+    return this.active().styles[id]?.size !== undefined;
+  }
+  setSize(id: ControlId, px: number): void {
+    const clamped = clampInt(px, ICON_SIZE_MIN, ICON_SIZE_MAX);
+    const styles = this.active().styles;
+    const cur = styles[id] ?? {};
+    if (clamped === DEFAULT_ICON_SIZE) delete cur.size;
+    else cur.size = clamped;
+    this.commitStyle(id, cur);
+  }
+  iconBgOf(id: ControlId): IconBg | undefined {
+    return this.active().styles[id]?.iconBg;
+  }
+  hasIconBg(id: ControlId): boolean {
+    return this.active().styles[id]?.iconBg !== undefined;
+  }
+  setIconBg(id: ControlId, partial: Partial<IconBg>): void {
+    const cur = this.active().styles[id] ?? {};
+    const prev = cur.iconBg ?? { padding: 0, radius: 0 };
+    cur.iconBg = {
+      padding: clampInt(partial.padding ?? prev.padding, 0, ICON_BG_PADDING_MAX),
+      radius: clampInt(partial.radius ?? prev.radius, 0, ICON_BG_RADIUS_MAX),
+    };
+    this.commitStyle(id, cur);
+  }
+  clearIconBg(id: ControlId): void {
+    const cur = this.active().styles[id];
+    if (!cur?.iconBg) return;
+    delete cur.iconBg;
+    this.commitStyle(id, cur);
+  }
+  // Store (or drop, when empty) a style entry for the active viewport, then notify.
+  private commitStyle(id: ControlId, style: IconStyle): void {
+    const styles = this.active().styles;
+    if (style.size === undefined && style.iconBg === undefined) delete styles[id];
+    else styles[id] = style;
+    this.changed();
+  }
+  // Non-mutating: a viewport's whole style map (for serialization).
+  stylesOf(vp: Viewport): Record<string, IconStyle> {
+    return this.layouts[vp].styles;
   }
 
   setTheme(partial: Partial<Theme>): void {
@@ -383,13 +489,14 @@ function sanitizeLayouts(value: Record<string, unknown>): Layouts {
       out[vp] = {
         regions: sanitizeRegions(entry.regions),
         collapse: collapseList(entry.collapse),
+        styles: sanitizeStyles(entry.styles),
       };
     }
     return out;
   }
   // Legacy migration: top-level `regions` → default viewport.
   if (value && typeof value.regions === "object") {
-    out.default = { regions: sanitizeRegions(value.regions), collapse: [] };
+    out.default = { regions: sanitizeRegions(value.regions), collapse: [], styles: {} };
     return out;
   }
   return defaultLayouts();
@@ -425,6 +532,31 @@ function idList(value: unknown): ControlId[] {
 }
 function collapseList(value: unknown): ControlId[] {
   return idList(value).filter(isCollapsible);
+}
+
+const clampInt = (v: number, min: number, max: number) => Math.round(clamp(v, min, max));
+
+// Per-viewport icon styles: keep entries for known ids with valid, clamped values.
+function sanitizeStyles(value: unknown): Record<string, IconStyle> {
+  const out: Record<string, IconStyle> = {};
+  if (!value || typeof value !== "object") return out;
+  for (const [id, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (registry.get(id) === undefined || !raw || typeof raw !== "object") continue;
+    const s = raw as { size?: unknown; iconBg?: { padding?: unknown; radius?: unknown } };
+    const style: IconStyle = {};
+    if (typeof s.size === "number" && Number.isFinite(s.size)) {
+      style.size = clampInt(s.size, ICON_SIZE_MIN, ICON_SIZE_MAX);
+    }
+    const bg = s.iconBg;
+    if (bg && typeof bg === "object" && typeof bg.padding === "number" && typeof bg.radius === "number") {
+      style.iconBg = {
+        padding: clampInt(bg.padding, 0, ICON_BG_PADDING_MAX),
+        radius: clampInt(bg.radius, 0, ICON_BG_RADIUS_MAX),
+      };
+    }
+    if (style.size !== undefined || style.iconBg) out[id] = style;
+  }
+  return out;
 }
 
 // Drop rows whose three lanes are all empty (shared by prune + purge).

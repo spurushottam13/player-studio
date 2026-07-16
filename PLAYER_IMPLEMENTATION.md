@@ -10,7 +10,8 @@ defined in [`spec.md`](./spec.md). The authoring side (dashboard) is in
 > carries behavior — see [§7](#7-controls-grididentifier).
 
 > **Schema:** this document describes **`schemaVersion` "3.1"** — the single
-> current version. Per-**viewport** entries (`default | 490 | 300 | 200`),
+> current version. Per-**viewport** entries (`default | 490 | 300 | vertical` —
+> three landscape width breakpoints plus a portrait 9:16 design),
 > **collapse-in-Setting**, one shared **`theme`** (colors, sizes, shared background
 > color/opacity, player-container padding), **lane-keyed rows** (`start | center |
 > end`; fill items flagged in a per-lane `fill` list), and an optional top-level
@@ -42,7 +43,7 @@ already fetches at init, under a `playerLayout` key:
     "layoutModel": "region",
     "theme": { /* shared across viewports */ },
     "controls": { /* OPTIONAL — see §7b */ },
-    "viewports": { /* default | 490 | 300 | 200 */ }
+    "viewports": { /* default | 490 | 300 | vertical */ }
   }
 }
 ```
@@ -81,15 +82,19 @@ layout): use the player's built-in default. Otherwise render as received.
     "paddingY": 4                // top+bottom
   },
   "controls": {
-    // OPTIONAL — declarations the local catalog can't supply — see §7b
-    "PlayNPause": { "icon": "Play", "size": 48, "background": { "padding": 10, "radius": 40 } },
+    // OPTIONAL — IDENTITY only (kind/label/icon/text + spacer width + lane-bg
+    // padding/radius) + icon overrides. Per-icon size/background are PER-VIEWPORT
+    // (viewports[].styles), not here. — see §7b
     "CUSTOM_spacer": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "RectangleHorizontal", "width": 200 }
   },
   "viewports": {
-    "default": { "regions": { /* ... */ }, "collapseInSetting": [ /* ids */ ] },
-    "490":     { "regions": { /* ... */ }, "collapseInSetting": [] },
-    "300":     { "regions": { /* ... */ }, "collapseInSetting": [] },
-    "200":     { "regions": { /* ... */ }, "collapseInSetting": [] }
+    "default":  {
+      "regions": { /* ... */ }, "collapseInSetting": [ /* ids */ ],
+      "styles": { "PlayNPause": { "size": 48, "background": { "padding": 10, "radius": 40 } } } // §7e
+    },
+    "490":      { "regions": { /* ... */ }, "collapseInSetting": [] },
+    "300":      { "regions": { /* ... */ }, "collapseInSetting": [] },
+    "vertical": { "regions": { /* ... */ }, "collapseInSetting": [] } // portrait 9:16
   }
 }
 ```
@@ -105,9 +110,19 @@ viewports → regions → rows (stacked) → lanes (start | center | end) → it
   background element (lane backgrounds **and** per-icon backgrounds). `paddingX` /
   `paddingY` are the inner padding of the whole player container. `iconSize` is the
   default; a control may override it with its own `size` (§7b).
-- **`controls`** (optional, global) declares custom controls, text/spacer/background
-  elements, icon overrides, and per-icon `size` / `background` — §7b.
-- Each **viewport** has its own `regions` **and** `collapseInSetting`.
+- **`controls`** (optional, global) is a deduped **identity table**, keyed by id: what
+  each used id _is_ (custom controls' kind/label/icon/text extras, icon overrides,
+  spacer width, lane-background padding/radius) — §7b. It does **not** place or render
+  anything, and it carries **no** per-icon size/background (those are per-viewport).
+- **Per-icon appearance is per-viewport.** Each viewport carries its own optional
+  **`styles`** map (`{ [id]: { size?, background? } }`, §7e), so the _same_ built-in
+  icon (e.g. `Forward`) can be one size with a circle in `default` and a different
+  size with no circle in `vertical`. Editing it in one viewport never changes another.
+- **Each viewport is independent.** A control appears in a viewport **only** where its
+  id is in that viewport's `regions` (or `collapseInSetting`), and looks how that
+  viewport's `styles` say. A control placed in one viewport is **not** added to the
+  others — e.g. a lane background placed in `default` is absent from `vertical` / `490`
+  / `300` unless placed there too.
 - A **region** is an ordered array of **rows**, stacked top→bottom.
 - A **row** is an object keyed by **lane** (`start | center | end`); empty lanes are
   omitted. A **lane** has ordered `items` and an optional `fill` list.
@@ -117,36 +132,41 @@ viewports → regions → rows (stacked) → lanes (start | center | end) → it
 
 ## 3. Viewports — choosing which layout to render
 
-The four viewport keys are **max-width breakpoints** in CSS px of the _rendered
-player_, not the device screen:
+Four viewport keys of the _rendered player_ (not the device screen). Three are
+**landscape max-width breakpoints** (in CSS px); `vertical` is a **portrait 9:16
+design** selected by orientation, not width:
 
-| key       | applies when player width is… |
-| --------- | ----------------------------- |
-| `200`     | ≤ 200 px                      |
-| `300`     | ≤ 300 px                      |
-| `490`     | ≤ 490 px                      |
-| `default` | anything wider (base)         |
+| key        | applies when the player renders…             |
+| ---------- | -------------------------------------------- |
+| `vertical` | **portrait** (taller than wide, ~9:16)       |
+| `300`      | landscape, width ≤ 300 px                     |
+| `490`      | landscape, width ≤ 490 px                     |
+| `default`  | landscape, anything wider (base)             |
 
-Pick the **smallest** breakpoint whose threshold is ≥ the current width; if wider
-than 490, use `default`. **Re-pick on resize** (window resize, rotation, fullscreen).
+Selection: if the player is **portrait** and `vertical` is authored, use it;
+otherwise pick the **smallest** landscape breakpoint whose threshold is ≥ the
+current width (`default` is the base). A viewport with no rows in any region is
+"not authored" and falls through. **Re-pick on resize / rotation / fullscreen.**
 
 ```ts
-const ORDER = ["200", "300", "490", "default"] as const; // narrow → wide
+const LANDSCAPE = ["300", "490", "default"] as const; // narrow → wide
+const authored = (vp) => vp && (vp.regions.top.length || vp.regions.center.length || vp.regions.bottom.length);
 
-function resolveViewport(viewports, width) {
-  const start = width <= 200 ? 0 : width <= 300 ? 1 : width <= 490 ? 2 : 3;
-  // A viewport with no rows in any region is "not authored" for this width —
-  // fall through to the next wider one. `default` is the base.
-  for (let i = start; i < ORDER.length; i++) {
-    const vp = viewports[ORDER[i]];
-    if (vp && (vp.regions.top.length || vp.regions.center.length || vp.regions.bottom.length)) return vp;
+function resolveViewport(viewports, { width, height }) {
+  // Portrait prefers the vertical design when authored.
+  if (height > width && authored(viewports.vertical)) return viewports.vertical;
+  // Landscape: smallest breakpoint ≥ width; fall through blanks; `default` is base.
+  const start = width <= 300 ? 0 : width <= 490 ? 1 : 2;
+  for (let i = start; i < LANDSCAPE.length; i++) {
+    if (authored(viewports[LANDSCAPE[i]])) return viewports[LANDSCAPE[i]];
   }
   return viewports.default;
 }
 ```
 
 > **Why fall through?** The dashboard may author only some viewports; a blank one
-> means "inherit the next wider design," and `default` is always the base.
+> means "inherit the next wider design" (landscape) or "use the landscape design"
+> (an unauthored `vertical`). `default` is always the base.
 
 ---
 
@@ -317,11 +337,16 @@ player can't infer. Untouched built-ins never appear; the block is **omitted whe
 empty**. Only **used** ids (on a bar or in `collapseInSetting`) are declared. An
 entry can carry any mix of:
 
+> **Declares, doesn't place.** `controls` is a shared lookup table — **one entry per
+> used id**, no matter how many viewports use it. A control **renders in a viewport
+> only where its id appears in that viewport's `regions` / `collapseInSetting`**; it
+> is never drawn just because it has a `controls` entry. So a background / spacer /
+> icon added to one viewport does **not** show in the others.
+
 ```jsonc
 "controls": {
   "CUSTOM_like": { "custom": true, "kind": "icon", "label": "Like", "icon": "Heart" }, // custom control
   "FullScreen": { "icon": "Maximize2" },                                               // icon override
-  "PlayNPause": { "icon": "Play", "size": 48, "background": { "padding": 10, "radius": 40 } }, // resized + per-icon bg
   "CUSTOM_spacer": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "RectangleHorizontal", "width": 200 },
   "CUSTOM_bg": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 4, "radius": 24 },
   "CUSTOM_time_left": { "custom": true, "kind": "text", "label": "Time Left", "icon": "ClockArrowDown", "textType": "timeLeft" }
@@ -336,27 +361,29 @@ entry can carry any mix of:
 | `kind`           | custom entries            | `icon` \| `text` \| `spacer` \| `background`                            |
 | `label`          | custom entries            | display name                                                            |
 | `icon`           | any                       | a Lucide **name**; overrides the catalog glyph for a built-in           |
-| `size`           | icon                      | per-icon size (px), overrides `theme.iconSize`                          |
-| `background`     | icon                      | `{ padding, radius }` — a shape behind this one glyph (§7d)             |
 | `textType`+extras| text                      | see [§7c](#7c-text-controls)                                            |
 | `width`          | spacer                    | spacer width (px)                                                       |
 | `paddingX/Y`,`radius` | background           | lane-background inset + corner radius (§7d)                             |
 
-> **Color/opacity are never per-control.** Every background — lane and per-icon —
-> is filled with `theme.backgroundColor` at `theme.backgroundOpacity`.
+> **Per-icon `size` and `background` are NOT here** — they are per-viewport, in
+> `viewports[].styles` (§7e), so the same icon can differ across viewports.
+> **Color/opacity are never per-control** — every background (lane and per-icon) is
+> filled with `theme.backgroundColor` at `theme.backgroundOpacity`.
 
 ### Resolution rules
 
-For any item id (in `items` **or** `collapseInSetting`), with `controls = layout.controls ?? {}`:
+For any item id (in `items` **or** `collapseInSetting`), pass the **identity** decl
+(`controls = layout.controls ?? {}`) **and** the selected viewport's per-icon
+**style** (`style = vp.styles?.[id]`, §7e):
 
 ```ts
-function resolveControl(id, controls) {
+function resolveControl(id, controls, style) {
   const decl = controls[id];
   const kind = decl?.custom ? (decl.kind ?? "icon") : REGISTRY[id].kind;
   const iconName = decl?.icon ?? CATALOG_ICON[id];            // declared icon WINS
   const icon = resolveLucide(iconName) ?? PLACEHOLDER_ICON;
-  const size = decl?.size ?? theme.iconSize;                  // per-icon override
-  const iconBg = decl?.background;                            // { padding, radius } | undefined
+  const size = style?.size ?? theme.iconSize;                 // per-VIEWPORT size override
+  const iconBg = style?.background;                           // per-VIEWPORT { padding, radius } | undefined
   const width = decl?.width;                                  // spacer
   const bgPad = { x: decl?.paddingX, y: decl?.paddingY, r: decl?.radius }; // lane background
   const textFormat = decl?.custom && decl.kind === "text" ? textFormatFor(decl) : REGISTRY[id]?.textFormat;
@@ -448,11 +475,12 @@ function renderLaneBackground(c, laneEl /* holds the non-background items */) {
 }
 ```
 
-**Per-icon background** (the `background` field on an **icon** decl). A shape drawn
-directly behind **one glyph** — a circle or badge that hugs just that icon,
-independent of lane spacers or row height. `{ padding, radius }`, filled with the same
-shared `theme.backgroundColor` / `backgroundOpacity`; render `border-radius` as
-`min(radius, 50%)` on the (square) icon+padding box so a large radius is a full circle.
+**Per-icon background** (the `background` field in a viewport's `styles[id]`, §7e —
+**per-viewport**). A shape drawn directly behind **one glyph** — a circle or badge
+that hugs just that icon, independent of lane spacers or row height. `{ padding,
+radius }`, filled with the same shared `theme.backgroundColor` / `backgroundOpacity`;
+render `border-radius` as `min(radius, 50%)` on the (square) icon+padding box so a
+large radius is a full circle.
 
 ```ts
 case "icon": {
@@ -471,6 +499,39 @@ case "icon": {
 
 ---
 
+## 7e. Per-viewport icon styles
+
+Each viewport carries an optional **`styles`** map, keyed by control id, holding the
+**per-icon appearance** for icons placed in _that_ viewport. It is how the same
+built-in icon can look different across viewports (a bigger `Forward` with a circle in
+`default`, a plain `Forward` in `vertical`). Omitted when a viewport has no styled
+icons.
+
+```jsonc
+"default": {
+  "regions": { /* ... */ },
+  "collapseInSetting": [],
+  "styles": {
+    "PlayNPause": { "size": 48, "background": { "padding": 10, "radius": 40 } },
+    "Forward":    { "size": 30, "background": { "padding": 10, "radius": 24 } }
+  }
+}
+```
+
+| field        | meaning                                                                     |
+| ------------ | --------------------------------------------------------------------------- |
+| `size`       | per-icon size (px) for this viewport; overrides `theme.iconSize`            |
+| `background` | `{ padding, radius }` — a shape behind this glyph (§7d); shared theme fill  |
+
+- Resolve appearance from **the selected viewport's** `styles[id]`, not the global
+  `controls` block (identity only). Missing `styles` / entry ⇒ `theme.iconSize`, no
+  per-icon background.
+- Only icons carry styles. Spacer width and lane-background padding/radius stay in the
+  `controls` decl (they're unique per-instance ids, so already per-viewport in
+  practice).
+
+---
+
 ## 8. Render algorithm (web reference)
 
 ```ts
@@ -479,9 +540,10 @@ function renderPlayer(layout, root, player) {
   const controls = layout.controls ?? {};
   const render = () => {
     const vp = resolveViewport(layout.viewports, player.width); // re-run on resize
+    const styles = vp.styles ?? {}; // §7e — per-viewport icon appearance
     root.replaceChildren();
-    renderRegions(vp.regions, controls, root, player);
-    renderSettingMenu(vp.collapseInSetting, controls, settingHost, player);
+    renderRegions(vp.regions, controls, styles, root, player);
+    renderSettingMenu(vp.collapseInSetting, controls, styles, settingHost, player);
   };
   render();
   player.onResize(render);
@@ -498,11 +560,11 @@ function applyTheme(root, t) {
   root.style.padding = `${t.paddingY}px ${t.paddingX}px`;
 }
 
-function renderLane(lane, group, controls, player) {
+function renderLane(lane, group, controls, styles, player) {
   const laneEl = makeLane(lane); // position: relative; items sit above backgrounds
   const backgrounds = [];
   for (const id of group.items) {
-    const c = resolveControl(id, controls);
+    const c = resolveControl(id, controls, styles[id]); // §7e — per-viewport style
     if (c.kind === "background") { backgrounds.push(c); continue; } // draw as backdrop, not inline
     const el = renderControl(id, c, player);
     if (group.fill?.includes(id)) el.classList.add("fill"); // flex: 1
@@ -565,44 +627,35 @@ because `collapseInSetting` is non-empty:
 
 ### 9c. Full document (the canonical fixture)
 
-Exactly what the studio emits for its default. It exercises the whole schema: a
-top-bar with **lane backgrounds** behind grouped icons, a center overlay with the
-transport icons **resized + per-icon circles** spread by **200px spacers**, a bottom
-bar with a **fill** slider + a **Time Left** text control + a lane background, the
-shared **background** color/opacity, player-container **padding**, and
-**collapseInSetting**. Narrow viewports are blank (fall through to `default`). Use as
-the golden fixture for parser tests:
+Exactly what the studio emits for its default. It exercises the whole schema:
+**both** the landscape `default` and the portrait `vertical` viewport carry a full
+design (`490` / `300` fall through), **lane backgrounds** with per-background padding,
+per-viewport **`styles`** (the transport circles; note `PlayNPause` differs between
+`default` and `vertical`), **200px spacers**, a **fill** slider, a **Time Left** text
+control, shared **background** color/opacity, player-container **padding**, and
+**collapseInSetting**. Use as the golden fixture for parser tests:
 
 ```json
 {
   "schemaVersion": "3.1",
   "layoutModel": "region",
   "theme": {
-    "primary": "#1e90ff",
-    "secondary": "#ffffff",
-    "iconSize": 22,
-    "barHeight": 40,
-    "gap": 8,
-    "backgroundColor": "#000000",
-    "backgroundOpacity": 0.5,
-    "paddingX": 9,
-    "paddingY": 4
+    "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8,
+    "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 9, "paddingY": 4
   },
   "controls": {
-    "CUSTOM_background_3": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket" },
-    "CUSTOM_background_2": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket" },
+    "CUSTOM_background_3": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 4 },
+    "CUSTOM_background_2": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 5, "paddingY": 5, "radius": 0 },
+    "CUSTOM_background": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 4 },
+    "CUSTOM_background_4": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 5, "paddingY": 3, "radius": 0 },
+    "CUSTOM_background_5": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 5, "paddingY": 5, "radius": 0 },
     "CUSTOM_spacer_3": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "RectangleHorizontal", "width": 200 },
-    "Backward": { "icon": "Rewind", "size": 30, "background": { "padding": 10, "radius": 24 } },
-    "PlayNPause": { "icon": "Play", "size": 48, "background": { "padding": 10, "radius": 40 } },
-    "Forward": { "icon": "FastForward", "size": 30, "background": { "padding": 10, "radius": 24 } },
     "CUSTOM_spacer_2": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "RectangleHorizontal", "width": 200 },
-    "CUSTOM_background": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket" },
     "CUSTOM_time_left": { "custom": true, "kind": "text", "label": "Time Left", "icon": "ClockArrowDown", "textType": "timeLeft" }
   },
   "viewports": {
-    "200": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
-    "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
     "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
+    "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
     "default": {
       "regions": {
         "top": [
@@ -627,7 +680,35 @@ the golden fixture for parser tests:
           }
         ]
       },
-      "collapseInSetting": ["Speed", "CaptionSearch"]
+      "collapseInSetting": ["Speed", "CaptionSearch"],
+      "styles": {
+        "Backward": { "size": 30, "background": { "padding": 10, "radius": 24 } },
+        "PlayNPause": { "size": 48, "background": { "padding": 10, "radius": 40 } },
+        "Forward": { "size": 30, "background": { "padding": 10, "radius": 24 } }
+      }
+    },
+    "vertical": {
+      "regions": {
+        "top": [
+          {
+            "start": { "items": ["CUSTOM_background_3", "Volume"] },
+            "end": { "items": ["FullScreen", "CUSTOM_background"] }
+          }
+        ],
+        "center": [
+          { "end": { "items": ["CUSTOM_background_5", "Captions"] } },
+          { "center": { "items": ["PlayNPause"] }, "end": { "items": ["CUSTOM_background_4", "CaptionSearch"] } },
+          { "end": { "items": ["SaveVideoOffline", "CUSTOM_background_2"] } }
+        ],
+        "bottom": [
+          {
+            "start": { "items": ["VideoProgress"], "fill": ["VideoProgress"] },
+            "end": { "items": ["CUSTOM_time_left"] }
+          }
+        ]
+      },
+      "collapseInSetting": [],
+      "styles": { "PlayNPause": { "size": 48, "background": { "padding": 6, "radius": 11 } } }
     }
   }
 }
@@ -660,7 +741,7 @@ A `CUSTOM_like` button (Lucide `Heart`) and `FullScreen` overridden to `Maximize
     },
     "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
     "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
-    "200": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] }
+    "vertical": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] }
   }
 }
 ```
@@ -692,7 +773,7 @@ A `CUSTOM_like` button (Lucide `Heart`) and `FullScreen` overridden to `Maximize
     },
     "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
     "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
-    "200": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] }
+    "vertical": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] }
   }
 }
 ```
@@ -730,15 +811,17 @@ the schema. Cases it still handles:
 - [ ] Walk each row's lanes `start → center → end`; item gap = `theme.gap`, no gap
       between lanes; implement the three alignments + `fill` (§6).
 - [ ] Build the `gridIdentifier → {kind, icon, behavior}` registry (all 17).
-- [ ] Parse `controls`; resolve every item's glyph/kind/size through it (§7b), with a
-      declared `icon` overriding the catalog glyph (placeholder if unknown).
+- [ ] Parse `controls` for identity (glyph/kind/label/text extras, spacer width,
+      lane-bg padding/radius) — §7b — with a declared `icon` overriding the catalog
+      glyph (placeholder if unknown).
 - [ ] Render `kind: "text"` by `textType`; wire `dynamicText` to host `cdt_*`
       variables (§7c).
 - [ ] Render **spacers** as fixed-width gaps and **lane backgrounds** as backdrop
       layers behind their lane (snap to the lane's items + padding, fill row height,
       shared fill color) — §7d.
-- [ ] Apply per-icon **`size`** and per-icon **`background`** (a circle/badge behind
-      the glyph, shared fill, `min(radius, 50%)`) — §7d.
+- [ ] Apply per-icon **`size`** and **`background`** from the **selected viewport's
+      `styles`** (§7e) — the circle/badge behind the glyph (shared fill,
+      `min(radius, 50%)`, §7d); default to `theme.iconSize` / none when absent.
 - [ ] Render `Setting` as the menu container; populate from `collapseInSetting` (§4).
 - [ ] `Volume`: on-demand inline slider — side + width per reveal, pushes neighbours,
       pinned while dragging (§7a).

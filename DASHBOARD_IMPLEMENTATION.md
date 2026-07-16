@@ -13,7 +13,8 @@ This doc generalizes the working code in [`src/modes/region/`](./src/modes/regio
 [`src/ui/`](./src/ui/).
 
 > **Schema:** the dashboard emits **`schemaVersion` "3.1"** — the single current
-> version. Per-**viewport** layouts (`default | 490 | 300 | 200`) of lane-keyed
+> version. Per-**viewport** layouts (`default | 490 | 300 | vertical` — three
+> landscape width breakpoints plus a portrait 9:16 design) of lane-keyed
 > rows, each viewport with its own `collapseInSetting` list, under one shared
 > `theme`, plus an optional top-level **`controls`** block declaring the custom
 > controls, text/spacer/background elements, icon overrides, and per-icon
@@ -37,7 +38,7 @@ This doc generalizes the working code in [`src/modes/region/`](./src/modes/regio
 │  17 built-ins + custom│  drop  │  regions → rows → lanes        │  on change  │ / code panel│
 │  + Add text/spacer/bg │ ◄───── │  (top / center / bottom)       │             │  (the JSON) │
 │  + Collapse in Setting│drag-back└──────────────────────────────┘             └─────────────┘
-└──────────────────────┘            ▲  Viewport switcher: Default · ≤490 · ≤300 · ≤200
+└──────────────────────┘            ▲  Viewport switcher: Default · ≤490 · ≤300 · 9:16
 ```
 
 Pieces:
@@ -55,9 +56,10 @@ Pieces:
 3. **Stage toolbar** — theme colors, a shared **Background** color+opacity tool, a
    **Padding** tool for the player container, and **Undo / Redo**.
 4. **State + registry + serializer + history** — a per-viewport layout model
-   (drops/collapses mutate it), a runtime **control registry** (custom controls,
-   icon overrides, per-icon sizes + backgrounds — §2b), and a combined **undo/redo
-   history** (§3b); all feed the Regional Layout JSON, re-serialized on every change.
+   (drops/collapses **and per-viewport icon styles** mutate it), a runtime **control
+   registry** (custom controls, icon overrides — identity/glyph, §2b), and a combined
+   **undo/redo history** (§3b); all feed the Regional Layout JSON, re-serialized on
+   every change.
 
 ---
 
@@ -72,7 +74,8 @@ carry editor state the wire's lane-keyed rows don't need.
 ```ts
 type Lane = "start" | "center" | "end"; // the three alignment lanes
 type RegionName = "top" | "center" | "bottom";
-type Viewport = "default" | "490" | "300" | "200"; // max-width breakpoints
+// three landscape max-width breakpoints + a portrait 9:16 design
+type Viewport = "default" | "490" | "300" | "vertical";
 
 interface Row {
   start: ControlId[]; // ordered L→R
@@ -81,10 +84,17 @@ interface Row {
 }
 type Regions = Record<RegionName, Row[]>; // each region = stacked rows
 
-// One viewport's design: the placed regions PLUS the icons folded into Setting.
+// One viewport's design: the placed regions, the icons folded into Setting, and
+// its PER-VIEWPORT icon appearance (size + background) — so the same built-in icon
+// can look different across viewports.
+interface IconStyle {
+  size?: number; // px; absent = theme default
+  iconBg?: IconBg; // { padding, radius } circle/badge; absent = none
+}
 interface ViewportLayout {
   regions: Regions;
   collapse: ControlId[]; // serialized as `collapseInSetting`
+  styles: Record<string, IconStyle>; // keyed by control id — serialized as viewport `styles`
 }
 type Layouts = Record<Viewport, ViewportLayout>;
 
@@ -101,7 +111,10 @@ interface Theme {
 ```
 
 - The store holds **four independent viewport layouts** + one **active viewport**
-  pointer. All mutating ops act on the active viewport only.
+  pointer. All mutating ops act on the active viewport only — so **placing, moving, or
+  removing a control** (a background, spacer, icon, text, …) affects **only** the
+  viewport you're editing; the others are untouched. Switching viewports shows only
+  that viewport's placed controls.
 - A region is an **ordered list of rows**; each row has **three lanes**
   (`start` / `center` / `end`), each an ordered list of control ids — a built-in
   `gridIdentifier` **or** a `CUSTOM_*` id (§2b).
@@ -110,8 +123,15 @@ interface Theme {
 - Empty rows are **pruned** automatically after every edit.
 - `theme` is global (one set of tokens for all viewports).
 - The layout stores only **ids**; what each id _is_ (label, kind, icon, custom?,
-  per-icon size/background, spacer width, background padding/radius) lives in the
-  **control registry** (§2b), persisted separately.
+  spacer width, background padding/radius) lives in the **global control registry**
+  (§2b), keyed by id and shared across viewports (identity/glyph). A control renders
+  in a viewport only where its id is placed (§3), so a lane background / spacer /
+  custom control added to one viewport is absent from the others.
+- **Per-icon appearance is per-viewport, NOT in the registry.** A placed icon's
+  `size` and `background` live in the active viewport's `styles` map (see
+  `ViewportLayout` above), so the same built-in icon (e.g. `Forward`) can be a bigger
+  circle in `default` and a plain glyph in `vertical` — editing one viewport never
+  touches another.
 
 > Why lanes? A lane is a fixed, always-present drop target, so the user can drop
 > into "the right edge of row 2" directly. The serializer emits the same lanes on
@@ -143,8 +163,8 @@ Every chip and placed item is keyed by a **control id**:
 
 The id's metadata (label, `kind`, icon, text extras, spacer width, background
 padding/radius) resolves through the **registry** (§2b), not the layout. Per-icon
-**size** and per-icon **background** are also registry-side, keyed by id — they
-apply to built-ins _and_ custom icons.
+**size** and per-icon **background**, however, are **per-viewport** — they live in
+the active viewport's `styles` map in `RegionState` (§3), not the registry.
 
 ---
 
@@ -153,18 +173,18 @@ apply to built-ins _and_ custom icons.
 The runtime **`ControlRegistry`** ([`src/registry.ts`](./src/registry.ts)) is a
 single app-wide singleton seeded from the built-in catalog
 ([`src/controls.ts`](./src/controls.ts)) and layered with the user's edits. It is
-the source of truth for _what a control is and how it looks_; the layout state
+the source of truth for _what a control is_ (identity + glyph); per-viewport
+appearance (icon size/background) lives in `RegionState` (§3). The layout state
 (§2/§3) only references ids.
 
-It owns five things, all persisted together to `player-studio:registry`:
+It owns three things, all persisted together to `player-studio:registry`
+(viewport-agnostic — no per-icon size/background here):
 
 |                     | what                                                             |
 | ------------------- | --------------------------------------------------------------- |
 | **built-ins**       | the 17 `ControlDef`s (frozen, in code)                          |
 | **custom controls** | user-added defs, `custom: true` — icon / text / spacer / background |
 | **icon overrides**  | `id → iconName` for built-ins whose glyph was swapped           |
-| **icon sizes**      | `id → px` per-icon size override (built-in or custom icon)      |
-| **icon backgrounds**| `id → { padding, radius }` — a circle/badge drawn behind an icon |
 
 ```ts
 class ControlRegistry {
@@ -174,11 +194,7 @@ class ControlRegistry {
   kindOf(id): ControlKind | undefined;  // drives isFill / isCollapsible / rendering
   isCustom(id): boolean;
   isOverridden(id): boolean;
-
-  // per-icon appearance (built-in OR custom icon)
-  sizeOf(id): number; hasSize(id): boolean; setSize(id, px): void;   // 12–48, default 20
-  iconBgOf(id): IconBg | undefined; hasIconBg(id): boolean;
-  setIconBg(id, { padding?, radius? }): void; clearIconBg(id): void;
+  // NOTE: per-icon size + background are per-VIEWPORT — see RegionState (§3).
 
   // creators
   addCustom({ label, icon }): ControlId;   // a CUSTOM_<slug> icon control
@@ -198,15 +214,15 @@ class ControlRegistry {
 export const registry = new ControlRegistry();
 ```
 
-> **`seedDefaults()` builds the whole default.** The canonical default layout
-> references several seeded registry entries: three background layers, two 200px
-> spacers, a Time Left readout, and the transport look (Backward/Forward 30px +
-> Play 48px, each with a circular per-icon background). `seedDefaults()` creates
-> them all — on a **fresh install** (no persisted registry) and on every
-> **`state.resetToDefault()`** — so Reset restores the full default look. A
-> returning user's saved registry is loaded instead of seeded, so their edits
-> survive. Deterministic ids (`DEFAULT_CONTROL_IDS`) let the default layout name
-> the seeded controls.
+> **`seedDefaults()` seeds the default's custom controls.** The canonical default
+> layout references seeded registry entries — three background layers, two 200px
+> spacers, a Time Left readout. `seedDefaults()` creates them on a **fresh install**
+> and on every **`state.resetToDefault()`**. The transport look (Backward/Forward
+> 30px + Play 48px, each with a circular background) is **per-viewport**, so it's
+> seeded into the `default` viewport's `styles` by `state.defaultLayouts` (§3), not
+> here. A returning user's saved registry is loaded instead of seeded, so their edits
+> survive. Deterministic ids (`DEFAULT_CONTROL_IDS`) let the default layout name the
+> seeded controls.
 
 ### Icons are Lucide **names**
 
@@ -241,8 +257,14 @@ class RegionState {
   getCollapsed(): ControlId[]; isCollapsed(id): boolean;
   collapse(id): void; uncollapse(id): void;
 
+  // ---- per-viewport icon appearance (ACTIVE viewport) — the SAME icon can
+  //      differ across viewports; this is why it lives here, not in the registry.
+  sizeOf(id): number; hasSize(id): boolean; setSize(id, px): void;   // 12–48, default 20
+  iconBgOf(id): IconBg | undefined; hasIconBg(id): boolean;
+  setIconBg(id, { padding?, radius? }): void; clearIconBg(id): void;
+
   // ---- non-mutating reads of ANY viewport, for serialization ----
-  rowsOf(vp, region): Row[]; collapsedOf(vp): ControlId[];
+  rowsOf(vp, region): Row[]; collapsedOf(vp): ControlId[]; stylesOf(vp): Record<string, IconStyle>;
 
   // ---- theme + lifecycle ----
   getTheme(): Theme;
@@ -364,56 +386,61 @@ function serializeRow(row: Row): SerializedRow {
 }
 ```
 
-### The `controls` block
+### The `controls` block (identity) + per-viewport `styles` (appearance)
 
-Keyed by id, built by walking every id **used** anywhere across the four viewports
-(lanes **and** collapse lists), emitting a declaration only for ids the player
-can't resolve on its own — **custom controls** (icon/text/spacer/background),
-**icon-overridden built-ins**, **resized icons**, and **icons with a per-icon
-background**. Stock built-ins stay id-only; the block is **omitted entirely when
-empty**.
+`controls` is a **deduped identity table** — one entry per used id, no matter how
+many viewports place it — for ids the player can't resolve on its own: **custom
+controls** (icon/text/spacer/background) and **icon-overridden built-ins**. It carries
+**no** per-icon size/background (those are per-viewport); stock built-ins stay id-only;
+the block is **omitted when empty**.
 
 ```ts
 function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
   const out = {};
   for (const id of used) {
     const custom = registry.isCustom(id);
-    const sized = registry.kindOf(id) === "icon" && registry.hasSize(id);
-    const hasBg = registry.hasIconBg(id); // per-icon circle/badge
-    if (!custom && !registry.isOverridden(id) && !sized && !hasBg) continue;
+    if (!custom && !registry.isOverridden(id)) continue;
     const def = registry.get(id);
-    const iconBg = hasBg ? { background: registry.iconBgOf(id) } : {}; // { padding, radius }
     out[id] = custom
       ? {
           custom: true,
           kind: def?.kind ?? "icon",
           label: def?.label ?? id,
           icon: registry.iconOf(id),
-          // text extras (§6f)
-          ...(def?.textType ? { textType: def.textType } : {}),
+          ...(def?.textType ? { textType: def.textType } : {}),          // text extras (§6f)
           ...(def?.separator !== undefined ? { separator: def.separator } : {}),
           ...(def?.variable !== undefined ? { variable: def.variable } : {}),
           ...(def?.showNumber !== undefined ? { showNumber: def.showNumber } : {}),
-          // per-icon size; spacer width; lane-background padding/radius
-          ...(sized ? { size: registry.sizeOf(id) } : {}),
           ...(def?.kind === "spacer" && def?.width !== undefined ? { width: def.width } : {}),
           ...(def?.kind === "background" && def?.paddingX !== undefined ? { paddingX: def.paddingX } : {}),
           ...(def?.kind === "background" && def?.paddingY !== undefined ? { paddingY: def.paddingY } : {}),
           ...(def?.kind === "background" && def?.radius !== undefined ? { radius: def.radius } : {}),
-          ...iconBg,
         }
-      : { icon: registry.iconOf(id), ...(sized ? { size: registry.sizeOf(id) } : {}), ...iconBg };
+      : { icon: registry.iconOf(id) }; // icon override → replacement glyph only
+  }
+  return out;
+}
+
+// Per-VIEWPORT icon appearance: for each icon PLACED in this viewport with a
+// non-default size or a background, emit { size?, background? }. Omitted when empty.
+function buildViewportStyles(state: RegionState, vp: Viewport): Record<string, unknown> {
+  const used = usedIdsIn(state, vp); // ids in vp's rows + collapse list
+  const styles = state.stylesOf(vp);
+  const out = {};
+  for (const id of used) {
+    const s = styles[id];
+    if (!s || (s.size === undefined && !s.iconBg)) continue;
+    out[id] = { ...(s.size !== undefined ? { size: s.size } : {}), ...(s.iconBg ? { background: s.iconBg } : {}) };
   }
   return out;
 }
 ```
 
-- **Background color/opacity are never per-control** — they are the shared
-  `theme.backgroundColor` / `backgroundOpacity`, applied to lane backgrounds **and**
-  per-icon backgrounds alike.
-- A **lane background** decl carries only `paddingX` / `paddingY` / `radius` (each
-  emitted only when non-default). A **spacer** carries `width`. A **per-icon
-  background** is the `background: { padding, radius }` field on the icon's decl.
+- **Background color/opacity are never per-control** — the shared
+  `theme.backgroundColor` / `backgroundOpacity` fill lane **and** per-icon backgrounds.
+- A **lane background** decl carries only `paddingX` / `paddingY` / `radius`; a
+  **spacer** carries `width`; both are unique `CUSTOM_*` ids, so per-instance. A
+  **per-icon size/background** rides in each viewport's `styles`, not the decl.
 
 ### Whole-document build
 
@@ -421,11 +448,16 @@ function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
 function buildRegionSpec(state: RegionState) {
   const theme = state.getTheme();
   const viewports = {};
-  for (const vp of ["default", "490", "300", "200"] as const) {
+  for (const vp of ["default", "490", "300", "vertical"] as const) {
     const regions = {};
     for (const region of ["top", "center", "bottom"] as const)
       regions[region] = state.rowsOf(vp, region).map(serializeRow);
-    viewports[vp] = { regions, collapseInSetting: state.collapsedOf(vp) };
+    const styles = buildViewportStyles(state, vp); // §7e in the player doc
+    viewports[vp] = {
+      regions,
+      collapseInSetting: state.collapsedOf(vp),
+      ...(Object.keys(styles).length ? { styles } : {}),
+    };
   }
   const controls = buildControlDecls(collectUsedIds(state));
   return {
@@ -468,7 +500,7 @@ is itself a `gap` target. Each placed control renders **by `kind`**:
 
 | kind         | rendered as                                                                 |
 | ------------ | --------------------------------------------------------------------------- |
-| `icon`       | `renderIcon(registry.iconOf(id), registry.sizeOf(id))` + optional per-icon background |
+| `icon`       | `renderIcon(registry.iconOf(id), state.sizeOf(id))` + optional per-icon background (both per-viewport) |
 | `text`       | the resolved `def.text` string (`00:00`, chapter title, …)                  |
 | `slider`     | a decorative `<input range>` that flex-fills                                |
 | `spacer`     | a blank stretch-height block at its `width` (§6g)                           |
@@ -494,10 +526,11 @@ Clicking a placed control (not its remove ×, not a resize handle, not after a d
 opens a small anchored **popover** ([`src/ui/popover.ts`](./src/ui/popover.ts)) with
 live preview (direct DOM writes) and commit-on-release (one undo step per gesture):
 
-- **Icon** → **Size** slider (12–48) **and** a **Background** toggle. Enabling it
-  reveals **Padding** + **Radius** sliders for a circle/badge behind that one icon
-  (§6g). Radius renders as `min(radius, 50%)` on a square box, so a high value is a
-  perfect circle.
+- **Icon** → **Size** slider (12–48) **and** a **Background** toggle (Padding +
+  Radius for a circle/badge behind that one icon, §6g). These write to the **active
+  viewport's** `styles` (`state.setSize` / `state.setIconBg`), so the same icon can
+  look different per viewport. Radius renders as `min(radius, 50%)` on a square box,
+  so a high value is a perfect circle.
 - **Spacer** → a **Width** slider (like icon size); a right-edge resize handle
   works too.
 - **Background** (lane) → **Padding X** / **Padding Y** / **Radius** sliders. Color
@@ -505,10 +538,14 @@ live preview (direct DOM writes) and commit-on-release (one undo step per gestur
 
 ### 6c. Viewport switcher
 
-A segmented control above the player (`Default · ≤490 · ≤300 · ≤200`). Switching
-swaps the active design **and resizes the preview** (`VIEWPORT_PX = { default: 640,
-"490": 490, "300": 300, "200": 200 }`, kept 16:9). Each viewport keeps its own
-layout + collapse set. `resetToDefault()` seeds only `default`; the narrow ones
+A segmented control above the player (`Default · ≤490 · ≤300 · 9:16`). Switching
+swaps the active design **and resizes the preview**: `VIEWPORT_PX = { default: 640,
+"490": 490, "300": 300, vertical: 320 }` sets the width; landscape viewports render
+16:9 (`height = w·9/16`), while **`vertical` renders portrait 9:16**
+(`height = w·16/9`, taller than wide). **Each viewport keeps its own independent
+layout + collapse set** — a control dropped in one viewport is not added to the
+others, and switching shows only that viewport's placed controls.
+`resetToDefault()` seeds only `default`; the other three (`490` / `300` / `vertical`)
 start blank (author from scratch, or leave blank to inherit on the player — see
 [`PLAYER_IMPLEMENTATION.md` §3](./PLAYER_IMPLEMENTATION.md#3-viewports--choosing-which-layout-to-render)).
 
@@ -574,10 +611,10 @@ mint a `CUSTOM_*` control and appear as normal draggable chips.
   `{ custom, kind: "background", label, icon, paddingX?, paddingY?, radius? }`
   (padding/radius only when non-default; **no** per-control color/width).
 
-- **Per-icon background** (registry `setIconBg`) is the _other_ way to get a
-  backdrop: a circle/badge drawn directly behind **one icon**, hugging just that
-  glyph regardless of lane spacers or row height. Toggle it in the icon popover
-  (§6b); it serializes as the icon decl's `background: { padding, radius }`. Use a
+- **Per-icon background** (`state.setIconBg`, **per active viewport**) is the _other_
+  way to get a backdrop: a circle/badge drawn directly behind **one icon**, hugging
+  just that glyph regardless of lane spacers or row height. Toggle it in the icon
+  popover (§6b); it serializes into that viewport's `styles[id].background`. Use a
   **lane background** for a wide segment backdrop; a **per-icon background** for a
   circle behind a single button (e.g. the transport Play/Backward/Forward circles).
 
@@ -608,9 +645,12 @@ Rendered by [`src/ui/toolbar.ts`](./src/ui/toolbar.ts):
       color/opacity + player padding. `snapshot`/`restore` for undo (§3b).
 - [ ] `reconcileSetting()` on every change (§3a).
 - [ ] `ControlRegistry`: 17 built-ins + custom (icon/text/spacer/background) +
-      overrides + per-icon sizes + per-icon backgrounds, persisted to
-      `player-studio:registry`; `snapshot`/`restore`; `seedDefaults()` builds the
-      full default look on fresh install + reset (§2b).
+      overrides (identity/glyph only — **no** per-icon size/background), persisted to
+      `player-studio:registry`; `snapshot`/`restore`; `seedDefaults()` seeds the
+      default's custom controls on fresh install + reset (§2b).
+- [ ] Per-viewport icon **`styles`** (size + background) in each `ViewportLayout`
+      (§2), with `sizeOf`/`setSize`/`iconBgOf`/`setIconBg`/`clearIconBg` on the active
+      viewport (§3); the default viewport seeds the transport look.
 - [ ] `History` combining registry + state snapshots, microtask-coalesced; wire
       Undo/Redo buttons + Cmd/Ctrl+Z (§3b).
 - [ ] Palette iterates `registry.list()`; "+ Add custom / text / spacer /
@@ -624,10 +664,11 @@ Rendered by [`src/ui/toolbar.ts`](./src/ui/toolbar.ts):
       re-render so backgrounds snap to the settled lane (§4, §6g).
 - [ ] Toolbar: shared Background color/opacity, Padding tool, Undo/Redo (§7).
 - [ ] Viewport switcher + resize (§6c). Collapse bin (§3a).
-- [ ] `serializeRow` + `buildControlDecls` + `buildRegionSpec` →
-      `schemaVersion` "3.1"; theme with background* + padding*; decls carry
-      `size` / spacer `width` / background `paddingX/paddingY/radius` / per-icon
-      `background`; `controls` omitted when empty (§5).
+- [ ] `serializeRow` + `buildControlDecls` (identity) + `buildViewportStyles`
+      (per-viewport `size`/`background`) + `buildRegionSpec` → `schemaVersion` "3.1";
+      theme with background* + padding*; decls carry spacer `width` / background
+      `paddingX/paddingY/radius`; each viewport carries its own `styles`; `controls`
+      omitted when empty (§5).
 - [ ] `state.subscribe` → code panel / `console.log` (swap for API later).
 - [ ] Verify the default output round-trips through the player
       ([`PLAYER_IMPLEMENTATION.md` §9c](./PLAYER_IMPLEMENTATION.md#9c-full-document-the-canonical-fixture)).

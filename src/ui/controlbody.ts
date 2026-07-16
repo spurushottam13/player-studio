@@ -3,13 +3,15 @@
 // regardless of how it is positioned. The icon branch resolves through the registry
 // so custom controls and icon overrides render live.
 
-import { DEFAULT_SPACER_WIDTH } from "../controls";
+import { DEFAULT_ICON_SIZE, DEFAULT_SPACER_WIDTH } from "../controls";
 import type { ControlDef, ControlId } from "../controls";
 import { renderIcon } from "../icons";
 import { registry } from "../registry";
 import { el } from "./dom";
 
-export function appendControlBody(ctrl: HTMLElement, def: ControlDef): void {
+// `iconSize` is the per-viewport size for this placement (the caller resolves it
+// from RegionState); defaults to the theme size when not given.
+export function appendControlBody(ctrl: HTMLElement, def: ControlDef, iconSize: number = DEFAULT_ICON_SIZE): void {
   if (def.kind === "slider") {
     ctrl.classList.add("placed-control--range");
     const range = el("input", { type: "range" }) as HTMLInputElement;
@@ -28,7 +30,7 @@ export function appendControlBody(ctrl: HTMLElement, def: ControlDef): void {
   } else {
     // Backgrounds never reach here (the region editor renders them as row
     // layers), so the fallback stays the icon branch.
-    ctrl.append(renderIcon(registry.iconOf(def.id), registry.sizeOf(def.id)));
+    ctrl.append(renderIcon(registry.iconOf(def.id), iconSize));
     if (def.id === "Volume") appendVolumeFlyout(ctrl);
   }
 }

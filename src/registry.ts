@@ -7,19 +7,14 @@
 import {
   BUILTIN_BY_ID,
   BUILTINS,
-  DEFAULT_ICON_SIZE,
   DEFAULT_SEPARATOR,
   DEFAULT_SPACER_WIDTH,
-  ICON_BG_PADDING_MAX,
-  ICON_BG_RADIUS_MAX,
-  ICON_SIZE_MAX,
-  ICON_SIZE_MIN,
   isControlKind,
   isTextType,
   TEXT_TYPE_BY_TYPE,
   textOf,
 } from "./controls";
-import type { ControlDef, ControlId, ControlKind, IconBg, TextType } from "./controls";
+import type { ControlDef, ControlId, ControlKind, TextType } from "./controls";
 import { isKnownIcon } from "./icons";
 import type { IconName } from "./icons";
 
@@ -31,15 +26,13 @@ type Listener = () => void;
 interface PersistShape {
   custom: ControlDef[];
   overrides: Array<[string, IconName]>;
-  sizes: Array<[string, number]>;
-  iconBgs: Array<[string, IconBg]>;
 }
 
 export class ControlRegistry {
   private custom = new Map<ControlId, ControlDef>(); // user-added controls
   private overrides = new Map<ControlId, IconName>(); // built-in glyph swaps
-  private sizes = new Map<ControlId, number>(); // per-icon size overrides (px)
-  private iconBgs = new Map<ControlId, IconBg>(); // per-icon background shape
+  // NOTE: per-icon size + background are per-VIEWPORT and live in RegionState
+  // (state.ts), not here — the registry stays viewport-agnostic (identity/glyph).
   private listeners = new Set<Listener>();
 
   constructor() {
@@ -69,20 +62,6 @@ export class ControlRegistry {
   }
   isOverridden(id: ControlId): boolean {
     return this.overrides.has(id);
-  }
-  // The effective icon size: a per-control override or the shared default.
-  sizeOf(id: ControlId): number {
-    return this.sizes.get(id) ?? DEFAULT_ICON_SIZE;
-  }
-  hasSize(id: ControlId): boolean {
-    return this.sizes.has(id);
-  }
-  // The per-icon background shape (a circle/badge behind the glyph), if set.
-  iconBgOf(id: ControlId): IconBg | undefined {
-    return this.iconBgs.get(id);
-  }
-  hasIconBg(id: ControlId): boolean {
-    return this.iconBgs.has(id);
   }
 
   // ---- writes (each persists + notifies) ---------------------------------
@@ -158,26 +137,6 @@ export class ControlRegistry {
     this.changed();
     return id;
   }
-  // Set a per-control icon size; the default size clears the override.
-  setSize(id: ControlId, px: number): void {
-    const clamped = Math.round(Math.min(Math.max(px, ICON_SIZE_MIN), ICON_SIZE_MAX));
-    if (clamped === DEFAULT_ICON_SIZE) this.sizes.delete(id);
-    else this.sizes.set(id, clamped);
-    this.changed();
-  }
-  // Enable/patch the per-icon background shape (clamped). Merges over any current.
-  setIconBg(id: ControlId, partial: Partial<IconBg>): void {
-    const cur = this.iconBgs.get(id) ?? { padding: 0, radius: 0 };
-    this.iconBgs.set(id, {
-      padding: clampInt(partial.padding ?? cur.padding, 0, ICON_BG_PADDING_MAX),
-      radius: clampInt(partial.radius ?? cur.radius, 0, ICON_BG_RADIUS_MAX),
-    });
-    this.changed();
-  }
-  // Remove the per-icon background.
-  clearIconBg(id: ControlId): void {
-    if (this.iconBgs.delete(id)) this.changed();
-  }
   // Seed the registry entries the canonical default layout references (see
   // state.defaultRegions): three background layers, two 200px spacers, a Time
   // Left readout, and the transport-icon look (Backward/Forward 30px + Play 48px,
@@ -187,34 +146,31 @@ export class ControlRegistry {
   // their edits are untouched.
   seedDefaults(): void {
     const D = DEFAULT_CONTROL_IDS;
-    const bg = (id: ControlId): ControlDef => ({
+    // `extra` carries the per-background padding/radius overrides (unique CUSTOM_*
+    // ids, so per-instance) baked into the default look.
+    const bg = (id: ControlId, extra: Partial<ControlDef> = {}): ControlDef => ({
       id, label: "Background", icon: isKnownIcon("PaintBucket") ? "PaintBucket" : "Square",
-      kind: "background", custom: true, defaultSpan: 1, maxSpan: 1,
+      kind: "background", custom: true, defaultSpan: 1, maxSpan: 1, ...extra,
     });
     const spacer = (id: ControlId): ControlDef => ({
       id, label: "Spacer", icon: isKnownIcon("RectangleHorizontal") ? "RectangleHorizontal" : "Square",
       kind: "spacer", custom: true, width: 200, defaultSpan: 1, maxSpan: 1,
     });
-    this.custom.set(D.bgBottom, bg(D.bgBottom));
-    this.custom.set(D.bgTopRight, bg(D.bgTopRight));
-    this.custom.set(D.bgTopLeft, bg(D.bgTopLeft));
+    this.custom.set(D.bgBottom, bg(D.bgBottom, { paddingX: 4 }));
+    this.custom.set(D.bgTopRight, bg(D.bgTopRight, { paddingX: 5, paddingY: 5, radius: 0 }));
+    this.custom.set(D.bgTopLeft, bg(D.bgTopLeft, { paddingX: 4 }));
+    this.custom.set(D.bg4, bg(D.bg4, { paddingX: 5, paddingY: 3, radius: 0 }));
+    this.custom.set(D.bg5, bg(D.bg5, { paddingX: 5, paddingY: 5, radius: 0 }));
     this.custom.set(D.spacerLeft, spacer(D.spacerLeft));
     this.custom.set(D.spacerRight, spacer(D.spacerRight));
     this.custom.set(D.timeLeft, makeTextDef(D.timeLeft, "timeLeft", {}));
-    // Transport icons: enlarged, each with a circular background.
-    this.sizes.set("Backward", 30);
-    this.sizes.set("PlayNPause", 48);
-    this.sizes.set("Forward", 30);
-    this.iconBgs.set("Backward", { padding: 10, radius: 24 });
-    this.iconBgs.set("PlayNPause", { padding: 10, radius: 40 });
-    this.iconBgs.set("Forward", { padding: 10, radius: 24 });
+    // The transport icons' enlarged size + circular background are per-VIEWPORT
+    // and seeded into the default viewport by state.defaultLayouts (state.ts).
     this.changed();
   }
   removeCustom(id: ControlId): void {
     if (this.custom.delete(id)) {
       this.overrides.delete(id);
-      this.sizes.delete(id);
-      this.iconBgs.delete(id);
       this.changed();
     }
   }
@@ -266,8 +222,6 @@ export class ControlRegistry {
     return {
       custom: [...this.custom.values()],
       overrides: [...this.overrides.entries()] as Array<[string, IconName]>,
-      sizes: [...this.sizes.entries()] as Array<[string, number]>,
-      iconBgs: [...this.iconBgs.entries()],
     };
   }
   private save(): void {
@@ -284,8 +238,6 @@ export class ControlRegistry {
   restore(snapshot: string): void {
     this.custom.clear();
     this.overrides.clear();
-    this.sizes.clear();
-    this.iconBgs.clear();
     try {
       this.hydrate(JSON.parse(snapshot) as Partial<PersistShape>);
     } catch {
@@ -348,32 +300,7 @@ export class ControlRegistry {
           this.overrides.set(id, icon);
         }
       }
-      for (const entry of parsed.sizes ?? []) {
-        const [id, px] = entry ?? [];
-        // Sizes apply to built-ins AND custom icon controls (unlike icon overrides).
-        if (typeof id === "string" && typeof px === "number" && Number.isFinite(px)) {
-          this.sizes.set(id, Math.round(Math.min(Math.max(px, ICON_SIZE_MIN), ICON_SIZE_MAX)));
-        }
-      }
-      for (const entry of parsed.iconBgs ?? []) {
-        const [id, bg] = entry ?? [];
-        if (typeof id === "string" && bg && typeof bg === "object") {
-          const padding = (bg as IconBg).padding;
-          const radius = (bg as IconBg).radius;
-          if (typeof padding === "number" && Number.isFinite(padding) && typeof radius === "number" && Number.isFinite(radius)) {
-            this.iconBgs.set(id, {
-              padding: clampInt(padding, 0, ICON_BG_PADDING_MAX),
-              radius: clampInt(radius, 0, ICON_BG_RADIUS_MAX),
-            });
-          }
-        }
-      }
   }
-}
-
-// Round + clamp a number into [min, max].
-function clampInt(v: number, min: number, max: number): number {
-  return Math.round(Math.min(Math.max(v, min), max));
 }
 
 // Deterministic ids for the custom controls the default layout references, so
@@ -383,6 +310,8 @@ export const DEFAULT_CONTROL_IDS = {
   bgBottom: "CUSTOM_background",
   bgTopRight: "CUSTOM_background_2",
   bgTopLeft: "CUSTOM_background_3",
+  bg4: "CUSTOM_background_4",
+  bg5: "CUSTOM_background_5",
   spacerLeft: "CUSTOM_spacer_3",
   spacerRight: "CUSTOM_spacer_2",
   timeLeft: "CUSTOM_time_left",

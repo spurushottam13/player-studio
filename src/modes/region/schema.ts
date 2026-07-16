@@ -1,7 +1,7 @@
 // Standalone schema for the exported region-mode player spec — the
 // schemaVersion 3.1 document produced by buildRegionSpec (spec.ts) — as a
 // single TS interface. Layout lives under per-viewport entries
-// (default | 490 | 300 | 200); each viewport is regions (top | center |
+// (default | 490 | 300 | vertical); each viewport is regions (top | center |
 // bottom) → rows → lane-keyed groups (start | center | end), empty lanes
 // omitted. A lane group lists its `items` in order; `fill` repeats the ones
 // that stretch (e.g. VideoProgress). Each viewport also carries its
@@ -69,24 +69,18 @@ export interface Layouts {
       separator?: string; // timeAll only
       variable?: string; // dynamicText only — the cdt_ variable name
       showNumber?: boolean; // currentChapter only
-      // 3.1 extras:
-      size?: number; // icon only — per-control size (px), overrides theme.iconSize
+      // Identity/geometry (viewport-agnostic). Per-icon size + background are NOT
+      // here — they are per-VIEWPORT (see viewports[].styles below).
       width?: number; // spacer only — px width
       // Background layers snap to their lane's controls; color/opacity are the
       // shared theme.background* values (never per-control).
       paddingX?: number; // background only — px the layer extends beyond its lane left+right (omitted = 10)
       paddingY?: number; // background only — px the layer extends beyond its lane top+bottom (omitted = 10)
       radius?: number; // background only — border-radius px, all corners (omitted = 4)
-      // icon only — a shape drawn directly BEHIND this one icon (e.g. a circle
-      // behind Play). Color/opacity are the shared theme.background* values.
-      background?: {
-        padding: number; // px around the icon (both axes)
-        radius: number; // border-radius px; a value ≥ half the box renders a full circle
-      };
     };
   };
   viewports: Record<
-    "default" | "490" | "300" | "200",
+    "default" | "490" | "300" | "vertical",
     {
       regions: Record<
         "top" | "center" | "bottom",
@@ -100,6 +94,19 @@ export interface Layouts {
         >
       >;
       collapseInSetting: ControlId[];
+      // Per-VIEWPORT icon appearance overrides, keyed by control id — so the same
+      // built-in icon can differ across viewports. Omitted when none in this
+      // viewport. Background color/opacity are the shared theme.background* values.
+      styles?: Record<
+        string,
+        {
+          size?: number; // per-control icon size (px), overrides theme.iconSize
+          background?: {
+            padding: number; // px around the icon (both axes)
+            radius: number; // border-radius px; ≥ half the box renders a full circle
+          };
+        }
+      >;
     }
   >;
 }

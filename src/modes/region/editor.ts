@@ -141,8 +141,10 @@ export function createRegionEditor(): EditorInstance {
   // ---- Viewport switcher: each viewport holds its own layout + collapse set.
   // Switching it swaps the active design AND resizes the preview to that width,
   // so a narrow viewport shows the responsive bar the user is authoring for.
-  const VIEWPORT_LABEL: Record<Viewport, string> = { default: "Default", "490": "≤490", "300": "≤300", "200": "≤200" };
-  const VIEWPORT_PX: Record<Viewport, number> = { default: 640, "490": 490, "300": 300, "200": 200 };
+  const VIEWPORT_LABEL: Record<Viewport, string> = { default: "Default", "490": "≤490", "300": "≤300", vertical: "9:16" };
+  // Preview WIDTH per viewport. `vertical` is portrait (9:16) — its height comes
+  // out taller than wide in render(); the rest are 16:9 landscape.
+  const VIEWPORT_PX: Record<Viewport, number> = { default: 640, "490": 490, "300": 300, vertical: 320 };
   const vpButtons = new Map<Viewport, HTMLElement>();
   const vpSeg = el("div", { class: "seg" });
   for (const vp of VIEWPORTS) {
@@ -220,29 +222,29 @@ export function createRegionEditor(): EditorInstance {
     openPopover(anchor, (body) => {
       const ctrlEl = () => player.querySelector<HTMLElement>(`.placed-control.${CSS.escape(id)}`);
 
-      // --- Size ---
-      const readout = el("span", { class: "popover-value", text: `${registry.sizeOf(id)}px` });
+      // --- Size (per active viewport) ---
+      const readout = el("span", { class: "popover-value", text: `${state.sizeOf(id)}px` });
       const range = el("input", { type: "range" });
       range.min = String(ICON_SIZE_MIN);
       range.max = String(ICON_SIZE_MAX);
-      range.value = String(registry.sizeOf(id));
+      range.value = String(state.sizeOf(id));
       range.addEventListener("input", () => {
         readout.textContent = `${range.value}px`;
         const svg = ctrlEl()?.querySelector("svg");
         svg?.setAttribute("width", range.value);
         svg?.setAttribute("height", range.value);
       });
-      range.addEventListener("change", () => registry.setSize(id, Number(range.value)));
+      range.addEventListener("change", () => state.setSize(id, Number(range.value)));
       body.append(el("div", { class: "popover-row" }, [el("span", { class: "popover-label", text: "Size" }), range, readout]));
 
-      // --- Background (circle/badge behind this icon) ---
-      const cur = registry.iconBgOf(id);
+      // --- Background (circle/badge behind this icon, per active viewport) ---
+      const cur = state.iconBgOf(id);
       let padding = cur?.padding ?? DEFAULT_ICON_BG_PADDING;
       let radius = cur?.radius ?? DEFAULT_ICON_BG_RADIUS;
       const toggle = el("input", { type: "checkbox" }) as HTMLInputElement;
       toggle.checked = !!cur;
       const previewBg = () => paintIconBgOn(ctrlEl() ?? el("div"), toggle.checked ? { padding, radius } : null);
-      const commitBg = () => (toggle.checked ? registry.setIconBg(id, { padding, radius }) : registry.clearIconBg(id));
+      const commitBg = () => (toggle.checked ? state.setIconBg(id, { padding, radius }) : state.clearIconBg(id));
 
       const padRow = sliderRow("Padding", 0, ICON_BG_PADDING_MAX, padding, "px",
         (v) => { padding = v; previewBg(); }, () => commitBg());
@@ -375,9 +377,10 @@ export function createRegionEditor(): EditorInstance {
     const def = registry.get(id);
     const ctrl = el("div", { class: `placed-control ${id}`, title: def?.label ?? id });
     makeDraggable(ctrl, id);
-    if (def) appendControlBody(ctrl, def);
-    // Per-icon background (circle/badge behind the glyph), if the user set one.
-    const iconBg = registry.iconBgOf(id);
+    // Icon size + per-icon background are per-VIEWPORT (RegionState), so the same
+    // built-in icon can look different across viewports.
+    if (def) appendControlBody(ctrl, def, state.sizeOf(id));
+    const iconBg = state.iconBgOf(id);
     if (iconBg) paintIconBgOn(ctrl, iconBg);
     appendRemoveButton(ctrl, (x) => state.remove(x), id);
     if (def?.kind === "spacer") {
@@ -478,8 +481,10 @@ export function createRegionEditor(): EditorInstance {
     player.style.setProperty("--pad-y", `${t.playerPadY}px`);
     const vp = state.getViewport();
     const w = VIEWPORT_PX[vp];
+    // `vertical` is portrait 9:16 (taller than wide); the rest are 16:9 landscape.
+    const h = vp === "vertical" ? Math.round((w * 16) / 9) : Math.round((w * 9) / 16);
     player.style.width = `${w}px`;
-    player.style.height = `${Math.round((w * 9) / 16)}px`;
+    player.style.height = `${h}px`;
     for (const [v, btn] of vpButtons) btn.classList.toggle("seg-btn--active", v === vp);
     for (const region of REGION_NAMES) renderRegion(region);
     // Backgrounds snap to their lanes only after the lanes are laid out.
