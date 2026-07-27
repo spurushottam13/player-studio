@@ -12,6 +12,7 @@ import {
   ICON_BG_RADIUS_MAX,
   ICON_SIZE_MAX,
   ICON_SIZE_MIN,
+  PLAYER_PADDING_MAX,
 } from "../../controls";
 import type { ControlId, IconBg } from "../../controls";
 import { DEFAULT_CONTROL_IDS, registry } from "../../registry";
@@ -59,7 +60,9 @@ export interface ItemPath {
 }
 
 type Listener = () => void;
-const STORAGE_KEY = "player-studio:region-layout";
+// `:v2` — the theme's player padding turned from px into a percentage of the
+// container, so a v1 save would read 9px as 9%. Bumping the key retires it.
+const STORAGE_KEY = "player-studio:region-layout:v2";
 
 // A control may be collapsed into Setting only if it is an icon and is not the
 // Setting control itself (Setting is the collapse container, not collapsible).
@@ -473,8 +476,9 @@ function mergeTheme(theme: Partial<Theme> | undefined): Theme {
     secondary: theme?.secondary ?? DEFAULT_THEME.secondary,
     bgColor: theme?.bgColor ?? DEFAULT_THEME.bgColor,
     bgOpacity: typeof theme?.bgOpacity === "number" ? theme.bgOpacity : DEFAULT_THEME.bgOpacity,
-    playerPadX: typeof theme?.playerPadX === "number" ? theme.playerPadX : DEFAULT_THEME.playerPadX,
-    playerPadY: typeof theme?.playerPadY === "number" ? theme.playerPadY : DEFAULT_THEME.playerPadY,
+    // Percentages of the container (X of width, Y of height) — clamped in range.
+    playerPadX: typeof theme?.playerPadX === "number" ? clamp(theme.playerPadX, 0, PLAYER_PADDING_MAX) : DEFAULT_THEME.playerPadX,
+    playerPadY: typeof theme?.playerPadY === "number" ? clamp(theme.playerPadY, 0, PLAYER_PADDING_MAX) : DEFAULT_THEME.playerPadY,
   };
 }
 

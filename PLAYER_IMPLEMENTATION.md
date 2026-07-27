@@ -9,7 +9,7 @@ defined in [`spec.md`](./spec.md). The authoring side (dashboard) is in
 > natively per platform, keyed by the control's `gridIdentifier`. The JSON never
 > carries behavior — see [§7](#7-controls-grididentifier).
 
-> **Schema:** this document describes **`schemaVersion` "3.1"** — the single
+> **Schema:** this document describes **`schemaVersion` "3.2"** — the single
 > current version. Per-**viewport** entries (`default | 490 | 300 | vertical` —
 > three landscape width breakpoints plus a portrait 9:16 design),
 > **collapse-in-Setting**, one shared **`theme`** (colors, sizes, shared background
@@ -18,6 +18,19 @@ defined in [`spec.md`](./spec.md). The authoring side (dashboard) is in
 > **`controls`** block declaring custom controls, text/spacer/background elements,
 > icon overrides, and per-icon appearance (`size`, `background`) — see
 > [§7b](#7b-the-controls-block).
+
+> **What changed in 3.2** (from 3.1) — three things, everything else is identical:
+>
+> | field                                | 3.1                        | 3.2                                              |
+> | ------------------------------------ | -------------------------- | ------------------------------------------------ |
+> | `controls[id].icon`                  | a Lucide export name (`"Play"`) | a **Material icon name** (`"play_arrow"`) — [§7f](#7f-icons-are-material-names) |
+> | `controls[id].width` (spacer)        | px                         | **% of the player container's width**            |
+> | `theme.paddingX` / `paddingY`        | px                         | **% of the container's width / height**          |
+>
+> Both units are percentages so a layout keeps its proportions at any render size
+> — the same document looks right on a 320 px phone and a 1080 px web player. All
+> other measurements (`iconSize`, `barHeight`, `gap`, per-icon `size` /
+> `background`, lane-background `paddingX/Y` / `radius`) stay in **px**.
 
 > **17 reserved built-ins.** All time readouts and three text elements are **text
 > controls** in the `controls` block ([§7c](#7c-text-controls)); the two
@@ -39,7 +52,7 @@ already fetches at init, under a `playerLayout` key:
   "duration": 612.4,
   // ...existing fields...
   "playerLayout": {
-    "schemaVersion": "3.1",
+    "schemaVersion": "3.2",
     "layoutModel": "region",
     "theme": { /* shared across viewports */ },
     "controls": { /* OPTIONAL — see §7b */ },
@@ -67,7 +80,7 @@ layout): use the player's built-in default. Otherwise render as received.
 
 ```jsonc
 {
-  "schemaVersion": "3.1",
+  "schemaVersion": "3.2",
   "layoutModel": "region", // always "region"
   "theme": {
     // ONE theme, shared by every viewport
@@ -78,14 +91,14 @@ layout): use the player's built-in default. Otherwise render as received.
     "gap": 8,                    // spacing between items INSIDE a lane
     "backgroundColor": "#000000",// shared fill for EVERY background (lane + per-icon)
     "backgroundOpacity": 0.5,    // 0–1, shared
-    "paddingX": 9,               // .Player container padding, left+right
-    "paddingY": 4                // top+bottom
+    "paddingX": 1.5,             // container padding left+right, % of container WIDTH
+    "paddingY": 1                // top+bottom, % of container HEIGHT
   },
   "controls": {
     // OPTIONAL — IDENTITY only (kind/label/icon/text + spacer width + lane-bg
     // padding/radius) + icon overrides. Per-icon size/background are PER-VIEWPORT
     // (viewports[].styles), not here. — see §7b
-    "CUSTOM_spacer": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "RectangleHorizontal", "width": 200 }
+    "CUSTOM_spacer": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "space_bar", "width": 31 }
   },
   "viewports": {
     "default":  {
@@ -108,8 +121,11 @@ viewports → regions → rows (stacked) → lanes (start | center | end) → it
 
 - **`theme`** is global. `backgroundColor` / `backgroundOpacity` apply to every
   background element (lane backgrounds **and** per-icon backgrounds). `paddingX` /
-  `paddingY` are the inner padding of the whole player container. `iconSize` is the
-  default; a control may override it with its own `size` (§7b).
+  `paddingY` are the inner padding of the whole player container, expressed as a
+  **percentage of the container** — `paddingX` of its width, `paddingY` of its
+  height (so the inset scales with the player instead of eating a narrow bar on a
+  300 px-wide one). `iconSize` is the default; a control may override it with its
+  own `size` (§7b).
 - **`controls`** (optional, global) is a deduped **identity table**, keyed by id: what
   each used id _is_ (custom controls' kind/label/icon/text extras, icon overrides,
   spacer width, lane-background padding/radius) — §7b. It does **not** place or render
@@ -237,7 +253,13 @@ also inline in `items`**, but render specially (a blank gap / a backdrop layer �
 | ------------ | ------------------------ | -------- | -------- |
 | region stack | `flex-direction: column` | `Column` | `VStack` |
 | row          | `display: flex`          | `Row`    | `HStack` |
-| player pad   | `padding: paddingY paddingX` | container inset | container inset |
+| player pad   | `padding: <padY>cqh <padX>cqw` (§8) | inset from measured size | inset from measured size |
+
+> **Don't write `padding: 1% 1.5%` on web.** CSS resolves percentage padding
+> against the containing block's **width on all four sides**, so `paddingY` would
+> silently track the width. Resolve `paddingY` against the container's **height**
+> — container query units (`cqw` / `cqh`) do it natively, or compute from the
+> measured box (§8). Native platforms multiply the measured player size directly.
 
 ---
 
@@ -251,25 +273,29 @@ the JSON is simply not rendered.
 
 ### The 17-control catalog (the contract)
 
-| #   | gridIdentifier     | kind   | render hint                                                      |
-| --- | ------------------ | ------ | ---------------------------------------------------------------- |
-| 1   | `AirPlay`          | icon   |                                                                  |
-| 2   | `Backward`         | icon   |                                                                  |
-| 3   | `CaptionSearch`    | icon   |                                                                  |
-| 4   | `Captions`         | icon   |                                                                  |
-| 5   | `Cast`             | icon   |                                                                  |
-| 6   | `Chapters`         | icon   |                                                                  |
-| 7   | `Forward`          | icon   |                                                                  |
-| 8   | `FullScreen`       | icon   |                                                                  |
-| 9   | `Notification`     | icon   |                                                                  |
-| 10  | `PictureInPicture` | icon   |                                                                  |
-| 11  | `PlayNPause`       | icon   |                                                                  |
-| 12  | `Quality`          | icon   |                                                                  |
-| 13  | `SaveVideoOffline` | icon   |                                                                  |
-| 14  | `Setting`          | icon   | menu container — auto-managed ([§4](#4-collapse-in-setting))     |
-| 15  | `Speed`            | icon   |                                                                  |
-| 16  | `VideoProgress`    | slider | typically `fill`                                                 |
-| 17  | `Volume`           | icon   | on-demand hover slider — [§7a](#7a-volume--the-hover-slider)     |
+The **default glyph** column is the Material icon name the studio draws. It is
+_not_ in the JSON — it's the reference so every platform ships a matching glyph.
+A `controls` entry with an `icon` overrides it ([§7b](#7b-the-controls-block)).
+
+| #   | gridIdentifier     | kind   | default glyph            | render hint                                                      |
+| --- | ------------------ | ------ | ------------------------ | ---------------------------------------------------------------- |
+| 1   | `AirPlay`          | icon   | `airplay`                |                                                                  |
+| 2   | `Backward`         | icon   | `fast_rewind`            |                                                                  |
+| 3   | `CaptionSearch`    | icon   | `manage_search`          |                                                                  |
+| 4   | `Captions`         | icon   | `closed_caption`         |                                                                  |
+| 5   | `Cast`             | icon   | `cast`                   |                                                                  |
+| 6   | `Chapters`         | icon   | `playlist_play`          |                                                                  |
+| 7   | `Forward`          | icon   | `fast_forward`           |                                                                  |
+| 8   | `FullScreen`       | icon   | `fullscreen`             |                                                                  |
+| 9   | `Notification`     | icon   | `notifications`          |                                                                  |
+| 10  | `PictureInPicture` | icon   | `picture_in_picture_alt` |                                                                  |
+| 11  | `PlayNPause`       | icon   | `play_arrow`             |                                                                  |
+| 12  | `Quality`          | icon   | `high_quality`           |                                                                  |
+| 13  | `SaveVideoOffline` | icon   | `download_for_offline`   |                                                                  |
+| 14  | `Setting`          | icon   | `settings`               | menu container — auto-managed ([§4](#4-collapse-in-setting))     |
+| 15  | `Speed`            | icon   | `speed`                  |                                                                  |
+| 16  | `VideoProgress`    | slider | `linear_scale`           | typically `fill`                                                 |
+| 17  | `Volume`           | icon   | `volume_up`              | on-demand hover slider — [§7a](#7a-volume--the-hover-slider)     |
 
 > Time readouts, Current Chapter, Dynamic Text, and Title are **not** built-ins —
 > they're **text controls** in `controls` ([§7c](#7c-text-controls)). Spacers and
@@ -306,11 +332,12 @@ const REGISTRY: Record<ControlId, ControlEntry> = {   // 17 built-ins; host may 
 ```
 
 > Iconography for the **17 built-ins** is not shipped in the JSON — native teams
-> provide matching glyphs. **Custom controls, overrides, spacers, and backgrounds**
-> _do_ ship a Lucide icon **name** (a string, never raw SVG); map it to your glyph
-> set (placeholder if unknown). The spacer/background chip glyph is cosmetic
-> (dashboard-only) — the player renders those elements as a gap / a layer, not as an
-> icon.
+> provide matching glyphs (the table's default-glyph column is the reference).
+> **Custom controls, overrides, spacers, and backgrounds** _do_ ship a Material
+> icon **name** (a string, never raw SVG) — see
+> [§7f](#7f-icons-are-material-names). The spacer/background chip glyph is
+> cosmetic (dashboard-only) — the player renders those elements as a gap / a
+> layer, not as an icon.
 
 ---
 
@@ -345,11 +372,11 @@ entry can carry any mix of:
 
 ```jsonc
 "controls": {
-  "CUSTOM_like": { "custom": true, "kind": "icon", "label": "Like", "icon": "Heart" }, // custom control
-  "FullScreen": { "icon": "Maximize2" },                                               // icon override
-  "CUSTOM_spacer": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "RectangleHorizontal", "width": 200 },
-  "CUSTOM_bg": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 4, "radius": 24 },
-  "CUSTOM_time_left": { "custom": true, "kind": "text", "label": "Time Left", "icon": "ClockArrowDown", "textType": "timeLeft" }
+  "CUSTOM_like": { "custom": true, "kind": "icon", "label": "Like", "icon": "favorite" }, // custom control
+  "FullScreen": { "icon": "open_in_full" },                                               // icon override
+  "CUSTOM_spacer": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "space_bar", "width": 31 },
+  "CUSTOM_bg": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 4, "radius": 24 },
+  "CUSTOM_time_left": { "custom": true, "kind": "text", "label": "Time Left", "icon": "hourglass_bottom", "textType": "timeLeft" }
 }
 ```
 
@@ -360,10 +387,10 @@ entry can carry any mix of:
 | `custom: true`   | custom/text/spacer/background | this id has no local catalog entry — fully declared                 |
 | `kind`           | custom entries            | `icon` \| `text` \| `spacer` \| `background`                            |
 | `label`          | custom entries            | display name                                                            |
-| `icon`           | any                       | a Lucide **name**; overrides the catalog glyph for a built-in           |
+| `icon`           | any                       | a Material icon **name** (§7f); overrides the catalog glyph for a built-in |
 | `textType`+extras| text                      | see [§7c](#7c-text-controls)                                            |
-| `width`          | spacer                    | spacer width (px)                                                       |
-| `paddingX/Y`,`radius` | background           | lane-background inset + corner radius (§7d)                             |
+| `width`          | spacer                    | spacer width, **% of the player container's width** (§7d)               |
+| `paddingX/Y`,`radius` | background           | lane-background inset + corner radius (**px**, §7d)                     |
 
 > **Per-icon `size` and `background` are NOT here** — they are per-viewport, in
 > `viewports[].styles` (§7e), so the same icon can differ across viewports.
@@ -381,18 +408,18 @@ function resolveControl(id, controls, style) {
   const decl = controls[id];
   const kind = decl?.custom ? (decl.kind ?? "icon") : REGISTRY[id].kind;
   const iconName = decl?.icon ?? CATALOG_ICON[id];            // declared icon WINS
-  const icon = resolveLucide(iconName) ?? PLACEHOLDER_ICON;
+  const icon = resolveMaterial(iconName) ?? PLACEHOLDER_ICON; // §7f
   const size = style?.size ?? theme.iconSize;                 // per-VIEWPORT size override
   const iconBg = style?.background;                           // per-VIEWPORT { padding, radius } | undefined
-  const width = decl?.width;                                  // spacer
-  const bgPad = { x: decl?.paddingX, y: decl?.paddingY, r: decl?.radius }; // lane background
+  const width = decl?.width;                                  // spacer — % of the player width
+  const bgPad = { x: decl?.paddingX, y: decl?.paddingY, r: decl?.radius }; // lane background (px)
   const textFormat = decl?.custom && decl.kind === "text" ? textFormatFor(decl) : REGISTRY[id]?.textFormat;
   return { kind, icon, size, iconBg, width, bgPad, textFormat, onActivate: REGISTRY[id]?.onActivate };
 }
 ```
 
-- **`icon` is always a Lucide name string.** Map it to your glyph set; placeholder if
-  unknown.
+- **`icon` is always a Material icon name string** (§7f). Map it to your glyph set;
+  placeholder if unknown.
 - A declared `icon` **overrides** the catalog glyph; the id, `kind`, and behavior are
   otherwise unchanged.
 - **No built-in behavior for customs.** A custom control renders but does nothing
@@ -445,11 +472,16 @@ Two ways to shape the bar with blank/decorative elements. Both are `controls` en
 and, for lane elements, appear inline in a lane's `items`.
 
 **Spacer** (`kind: "spacer"`). A blank block that adds horizontal space; it stretches
-to the lane/row height and is `width` px wide. Render it as an empty fixed-width box
-inline at its position in `items` (no glyph, no behavior).
+to the lane/row height and is `width` **percent of the player container's width**
+wide (not of its lane — the container, so the gap holds its proportion at every
+render size). Render it as an empty box inline at its position in `items` (no
+glyph, no behavior).
 
 ```ts
-case "spacer": return spacerBox(c.width); // width px; full height; transparent
+case "spacer": return spacerBox(player.width * c.width / 100); // full height; transparent
+// Web can also let CSS do it: `width: calc(<width> * 1cqw)` inside a
+// `container-type: size` player, or a plain `${width}%` ONLY when the spacer's
+// containing block is the player box itself.
 ```
 
 **Lane background** (`kind: "background"`). A translucent color layer behind a lane's
@@ -532,6 +564,35 @@ icons.
 
 ---
 
+## 7f. Icons are Material **names**
+
+Every `icon` in the document is a **Material Icons name** — the icon's own key in
+the Material catalog, lower_snake_case: `"play_arrow"`, `"closed_caption"`,
+`"volume_up"`. Never raw SVG, never a per-platform asset path.
+
+```jsonc
+"controls": { "FullScreen": { "icon": "open_in_full" } }
+```
+
+Because the name _is_ the key, every platform looks the same glyph up in its own
+Material set — no mapping table to maintain:
+
+| platform | resolve `"play_arrow"` with                                                     |
+| -------- | ------------------------------------------------------------------------------- |
+| Web      | the Material Icons ligature font: `<span class="material-icons">play_arrow</span>` (or the matching SVG asset) |
+| Android  | `R.drawable.ic_play_arrow` / the `material-icons` asset of that name             |
+| iOS      | the bundled Material asset named `play_arrow`                                    |
+
+- **Unknown name ⇒ placeholder, never a failure.** A name may come from a newer
+  Material release than your build ships; draw a neutral placeholder glyph
+  (the studio uses `help_outline`) and carry on.
+- The dashboard picks from ~2,100 names, so treat the set as open — don't
+  hard-code an allow-list.
+- A declared `icon` only replaces the **glyph**. The control's id, `kind`, and
+  behavior are unchanged.
+
+---
+
 ## 8. Render algorithm (web reference)
 
 ```ts
@@ -555,9 +616,14 @@ function applyTheme(root, t) {
   root.style.setProperty("--gap", `${t.gap}px`);
   root.style.setProperty("--bar-height", `${t.barHeight}px`);
   root.style.setProperty("--icon-size", `${t.iconSize}px`);
-  // shared background + player container padding
   root.style.setProperty("--bg-fill", rgba(t.backgroundColor, t.backgroundOpacity));
-  root.style.padding = `${t.paddingY}px ${t.paddingX}px`;
+  // Container padding is a PERCENTAGE: X of the player's width, Y of its HEIGHT.
+  // `cqw`/`cqh` resolve both correctly (the player declares `container-type: size`);
+  // plain `%` padding would resolve BOTH axes against the width — see §6.
+  root.style.padding = `${t.paddingY}cqh ${t.paddingX}cqw`;
+  // Equivalent without container queries — recompute on resize:
+  // const { width, height } = root.getBoundingClientRect();
+  // root.style.padding = `${height * t.paddingY / 100}px ${width * t.paddingX / 100}px`;
 }
 
 function renderLane(lane, group, controls, styles, player) {
@@ -631,27 +697,27 @@ Exactly what the studio emits for its default. It exercises the whole schema:
 **both** the landscape `default` and the portrait `vertical` viewport carry a full
 design (`490` / `300` fall through), **lane backgrounds** with per-background padding,
 per-viewport **`styles`** (the transport circles; note `PlayNPause` differs between
-`default` and `vertical`), **200px spacers**, a **fill** slider, a **Time Left** text
-control, shared **background** color/opacity, player-container **padding**, and
-**collapseInSetting**. Use as the golden fixture for parser tests:
+`default` and `vertical`), **31%-wide spacers**, a **fill** slider, a **Time Left**
+text control, shared **background** color/opacity, percentage player-container
+**padding**, and **collapseInSetting**. Use as the golden fixture for parser tests:
 
 ```json
 {
-  "schemaVersion": "3.1",
+  "schemaVersion": "3.2",
   "layoutModel": "region",
   "theme": {
     "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8,
-    "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 9, "paddingY": 4
+    "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 1.5, "paddingY": 1
   },
   "controls": {
-    "CUSTOM_background_3": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 4 },
-    "CUSTOM_background_2": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 5, "paddingY": 5, "radius": 0 },
-    "CUSTOM_background": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 4 },
-    "CUSTOM_background_4": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 5, "paddingY": 3, "radius": 0 },
-    "CUSTOM_background_5": { "custom": true, "kind": "background", "label": "Background", "icon": "PaintBucket", "paddingX": 5, "paddingY": 5, "radius": 0 },
-    "CUSTOM_spacer_3": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "RectangleHorizontal", "width": 200 },
-    "CUSTOM_spacer_2": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "RectangleHorizontal", "width": 200 },
-    "CUSTOM_time_left": { "custom": true, "kind": "text", "label": "Time Left", "icon": "ClockArrowDown", "textType": "timeLeft" }
+    "CUSTOM_background_3": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 4 },
+    "CUSTOM_background_2": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 5, "paddingY": 5, "radius": 0 },
+    "CUSTOM_background": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 4 },
+    "CUSTOM_background_4": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 5, "paddingY": 3, "radius": 0 },
+    "CUSTOM_background_5": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 5, "paddingY": 5, "radius": 0 },
+    "CUSTOM_spacer_3": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "space_bar", "width": 31 },
+    "CUSTOM_spacer_2": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "space_bar", "width": 31 },
+    "CUSTOM_time_left": { "custom": true, "kind": "text", "label": "Time Left", "icon": "hourglass_bottom", "textType": "timeLeft" }
   },
   "viewports": {
     "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
@@ -716,17 +782,18 @@ control, shared **background** color/opacity, player-container **padding**, and
 
 ### 9d. Custom control + icon override
 
-A `CUSTOM_like` button (Lucide `Heart`) and `FullScreen` overridden to `Maximize2`:
+A `CUSTOM_like` button (Material `favorite`) and `FullScreen` overridden to
+`open_in_full`:
 
 ```json
 {
-  "schemaVersion": "3.1",
+  "schemaVersion": "3.2",
   "layoutModel": "region",
   "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8,
-             "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 9, "paddingY": 4 },
+             "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 1.5, "paddingY": 1 },
   "controls": {
-    "CUSTOM_like": { "custom": true, "kind": "icon", "label": "Like", "icon": "Heart" },
-    "FullScreen": { "icon": "Maximize2" }
+    "CUSTOM_like": { "custom": true, "kind": "icon", "label": "Like", "icon": "favorite" },
+    "FullScreen": { "icon": "open_in_full" }
   },
   "viewports": {
     "default": {
@@ -750,14 +817,14 @@ A `CUSTOM_like` button (Lucide `Heart`) and `FullScreen` overridden to `Maximize
 
 ```json
 {
-  "schemaVersion": "3.1",
+  "schemaVersion": "3.2",
   "layoutModel": "region",
   "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8,
-             "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 9, "paddingY": 4 },
+             "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 1.5, "paddingY": 1 },
   "controls": {
-    "CUSTOM_time_all": { "custom": true, "kind": "text", "label": "Time All", "icon": "Clock",
+    "CUSTOM_time_all": { "custom": true, "kind": "text", "label": "Time All", "icon": "av_timer",
                          "textType": "timeAll", "separator": " / " },
-    "cdt_promoName": { "custom": true, "kind": "text", "label": "cdt_promoName", "icon": "Braces",
+    "cdt_promoName": { "custom": true, "kind": "text", "label": "cdt_promoName", "icon": "data_object",
                        "textType": "dynamicText", "variable": "cdt_promoName" }
   },
   "viewports": {
@@ -792,12 +859,13 @@ the schema. Cases it still handles:
 | Empty/omitted region                       | render nothing for it (valid)                                 |
 | `collapseInSetting` empty                  | no Setting menu (and `Setting` absent from bar)               |
 | `controls` block absent                    | render every id from the local catalog                        |
-| Declared `icon` name unknown to this build | draw a placeholder glyph (don't fail)                         |
+| Declared `icon` name unknown to this Material build | draw a placeholder glyph (don't fail) — §7f          |
 | `CUSTOM_*` control with no host handler    | render its glyph; activation is a no-op (decorative)          |
 | Text control (`kind: "text"`, `textType`)  | render by `textType` (§7c); passive readout                   |
 | `dynamicText` variable not set by host     | render empty until the host sets the `cdt_*` variable         |
 | Spacer / background element                | render as a blank gap / a backdrop layer (§7d), never a glyph |
 | Missing `size` / `background` / padding     | fall back to `theme.iconSize` / no per-icon bg / default insets |
+| Player resized / rotated                   | re-resolve the % padding + spacer widths against the new box   |
 
 ---
 
@@ -806,19 +874,21 @@ the schema. Cases it still handles:
 - [ ] Read `playerLayout` from metadata; default only if absent.
 - [ ] Apply the global `theme`: colors, gap, `iconSize`/`barHeight`, the shared
       background fill (`backgroundColor` @ `backgroundOpacity`), and the container
-      **padding** (`paddingX` / `paddingY`).
+      **padding** — `paddingX` is a **% of the container's width**, `paddingY` a
+      **% of its height** (§6); recompute on resize.
 - [ ] Resolve the viewport by player width; **re-resolve on resize** (§3).
 - [ ] Walk each row's lanes `start → center → end`; item gap = `theme.gap`, no gap
       between lanes; implement the three alignments + `fill` (§6).
 - [ ] Build the `gridIdentifier → {kind, icon, behavior}` registry (all 17).
 - [ ] Parse `controls` for identity (glyph/kind/label/text extras, spacer width,
       lane-bg padding/radius) — §7b — with a declared `icon` overriding the catalog
-      glyph (placeholder if unknown).
+      glyph. **Every `icon` is a Material icon name** — resolve it in your platform's
+      Material set, placeholder if unknown (§7f).
 - [ ] Render `kind: "text"` by `textType`; wire `dynamicText` to host `cdt_*`
       variables (§7c).
-- [ ] Render **spacers** as fixed-width gaps and **lane backgrounds** as backdrop
-      layers behind their lane (snap to the lane's items + padding, fill row height,
-      shared fill color) — §7d.
+- [ ] Render **spacers** as gaps `width`% of the **player container's width** wide,
+      and **lane backgrounds** as backdrop layers behind their lane (snap to the
+      lane's items + padding, fill row height, shared fill color) — §7d.
 - [ ] Apply per-icon **`size`** and **`background`** from the **selected viewport's
       `styles`** (§7e) — the circle/badge behind the glyph (shared fill,
       `min(radius, 50%)`, §7d); default to `theme.iconSize` / none when absent.

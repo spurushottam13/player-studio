@@ -192,9 +192,10 @@ flag needed).
 | `text`   | `<span>`         | `Text`                   | `Text`                   |
 | `slider` | `<input range>`  | `Slider`                 | `Slider`                 |
 
-> **Iconography:** the studio uses Lucide. Native teams must ship matching
-> glyphs (same SVGs, or agreed SF Symbols / Material equivalents) for visual
-> parity. See [§8](#8-out-of-scope).
+> **Iconography:** the studio uses **Material Icons**, and an icon travels as its
+> Material **name** (its own catalog key, e.g. `play_arrow`). Native teams resolve
+> the same name in their own Material set, so there is no mapping table to keep in
+> sync. See [§8](#8-out-of-scope).
 
 ---
 
@@ -206,7 +207,7 @@ information, both via an optional top-level **`controls`** object keyed by id
 (`schemaVersion` ≥ `2.1`):
 
 1. **Custom controls** — a user adds their own control (a new chip) whose glyph is
-   **any Lucide icon**. Its id is `CUSTOM_<slug>` (the `CUSTOM_` prefix guarantees
+   **any Material icon**. Its id is `CUSTOM_<slug>` (the `CUSTOM_` prefix guarantees
    no collision with the reserved ids). Because no platform has a default for it, it
    is **fully declared**: `custom`, `kind`, `label`, and `icon`.
 2. **Icon overrides** — a user swaps the glyph of a built-in (e.g. give `FullScreen`
@@ -222,16 +223,17 @@ information, both via an optional top-level **`controls`** object keyed by id
       "custom": true,
       "kind":   "icon",
       "label":  "Like",
-      "icon":   "Heart"              // a Lucide icon NAME (never raw SVG)
+      "icon":   "favorite"           // a Material icon NAME (never raw SVG)
     },
-    "FullScreen": { "icon": "Maximize2" }   // overridden built-in — glyph only
+    "FullScreen": { "icon": "open_in_full" } // overridden built-in — glyph only
   }
 }
 ```
 
-- **`icon` is always a Lucide icon name** (a string), never raw SVG. Each platform
-  maps the name to its own glyph set (Lucide on web; the agreed Lucide-equivalent SF
-  Symbol / Material asset on native).
+- **`icon` is always a Material icon name** (a string, lower_snake_case), never raw
+  SVG. The name IS the key: each platform looks it up in its own Material set (the
+  ligature font or SVG asset on web, the Material drawable on Android, the bundled
+  Material asset on iOS). Unknown name ⇒ placeholder, never a failure.
 - Only **used** controls (placed on a bar or collapsed into Setting) are emitted;
   the block is omitted entirely when empty, so default layouts are unchanged.
 - **Renderer lookup for any item id:** if it appears in `controls` with an `icon`,
@@ -270,7 +272,7 @@ This spec defines **layout and style**, not:
   but have **no built-in behavior** — the host app binds their `CUSTOM_*` id, or
   they are purely decorative until it does.
 - **Iconography assets** — the spec names *which* control and, for custom/overridden
-  controls, the Lucide icon *name*; teams must ship the matching glyphs for pixel
+  controls, the Material icon *name*; teams must ship the matching glyphs for pixel
   parity.
 - **Player chrome** — video surface, buffering spinner, gesture zones.
 

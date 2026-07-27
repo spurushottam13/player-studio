@@ -1,5 +1,5 @@
 // Standalone schema for the exported region-mode player spec — the
-// schemaVersion 3.1 document produced by buildRegionSpec (spec.ts) — as a
+// schemaVersion 3.2 document produced by buildRegionSpec (spec.ts) — as a
 // single TS interface. Layout lives under per-viewport entries
 // (default | 490 | 300 | vertical); each viewport is regions (top | center |
 // bottom) → rows → lane-keyed groups (start | center | end), empty lanes
@@ -38,7 +38,7 @@ export const ControlId = {
 export type ControlId = (typeof ControlId)[keyof typeof ControlId];
 
 export interface Layouts {
-  schemaVersion: "3.1";
+  schemaVersion: "3.2";
   layoutModel: "region";
   theme: {
     primary: string;
@@ -48,15 +48,17 @@ export interface Layouts {
     gap: number;
     backgroundColor: string; // shared fill for ALL background layers
     backgroundOpacity: number; // 0–1, shared
-    paddingX: number; // .Player container padding, left+right (px)
-    paddingY: number; // .Player container padding, top+bottom (px)
+    // Container padding as a PERCENTAGE of the player box, so it scales with the
+    // player instead of being a fixed inset at every size.
+    paddingX: number; // left+right, % of the container's WIDTH
+    paddingY: number; // top+bottom, % of the container's HEIGHT
   };
   controls?: {
     [id: string]: {
       custom?: boolean;
       kind?: "icon" | "text" | "slider" | "spacer" | "background";
       label?: string;
-      icon: string; // a Lucide icon name
+      icon: string; // a Material icon name (the icon's own key, e.g. "play_arrow")
       // Text-control extras:
       textType?:
         | "timeLeft"
@@ -71,7 +73,7 @@ export interface Layouts {
       showNumber?: boolean; // currentChapter only
       // Identity/geometry (viewport-agnostic). Per-icon size + background are NOT
       // here — they are per-VIEWPORT (see viewports[].styles below).
-      width?: number; // spacer only — px width
+      width?: number; // spacer only — width as a % of the player container's WIDTH
       // Background layers snap to their lane's controls; color/opacity are the
       // shared theme.background* values (never per-control).
       paddingX?: number; // background only — px the layer extends beyond its lane left+right (omitted = 10)

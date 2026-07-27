@@ -1,4 +1,4 @@
-// Region mode native spec (spec.md): schemaVersion 3.1, layoutModel "region".
+// Region mode native spec (spec.md): schemaVersion 3.2, layoutModel "region".
 // Generated directly from the native region state (exact, not derived). `regions`
 // live under per-viewport entries (default | 490 | 300 | vertical); each viewport also
 // carries its `collapseInSetting` icon list. Theme is shared across viewports.
@@ -9,6 +9,12 @@
 // is preserved); the lane's `fill` list only flags which of them stretch.
 // The 2.1 `controls` block (declarations for custom / overridden controls) is
 // unchanged.
+//
+// schemaVersion 3.2 changes two units and one vocabulary: an `icon` is a
+// MATERIAL icon name (its own catalog key, e.g. "play_arrow") instead of a
+// Lucide export name, a spacer's `width` is a PERCENTAGE of the player
+// container's width, and theme.paddingX / paddingY are PERCENTAGES of the
+// container's width / height. Everything else is 3.1.
 
 import type { ControlId } from "../../controls";
 import { isFill, registry } from "../../registry";
@@ -75,8 +81,9 @@ function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
           ...(def?.separator !== undefined ? { separator: def.separator } : {}),
           ...(def?.variable !== undefined ? { variable: def.variable } : {}),
           ...(def?.showNumber !== undefined ? { showNumber: def.showNumber } : {}),
-          // Spacer width; lane-background padding/radius (unique CUSTOM_* ids, so
-          // per-instance already). Background color+opacity are shared (theme).
+          // Spacer width (% of the player container width); lane-background
+          // padding/radius in px (unique CUSTOM_* ids, so per-instance already).
+          // Background color+opacity are shared (theme).
           ...(def?.kind === "spacer" && def?.width !== undefined ? { width: def.width } : {}),
           ...(def?.kind === "background" && def?.paddingX !== undefined ? { paddingX: def.paddingX } : {}),
           ...(def?.kind === "background" && def?.paddingY !== undefined ? { paddingY: def.paddingY } : {}),
@@ -124,9 +131,9 @@ export function buildRegionSpec(state: RegionState) {
   }
   const controls = buildControlDecls(collectUsedIds(state));
   return {
-    // 3.1: adds spacer/background control kinds, per-control size/width/padding/
-    // radius decl fields, and shared theme.backgroundColor/backgroundOpacity.
-    schemaVersion: "3.1",
+    // 3.2: Material icon names, spacer width and container padding as
+    // percentages (see the header note).
+    schemaVersion: "3.2",
     layoutModel: "region" as const,
     theme: {
       primary: theme.primary,
@@ -137,7 +144,8 @@ export function buildRegionSpec(state: RegionState) {
       // Shared across all background layers.
       backgroundColor: theme.bgColor,
       backgroundOpacity: theme.bgOpacity,
-      // Padding of the whole player container (px).
+      // Padding of the whole player container, as a percentage of its box:
+      // X of the width, Y of the height.
       paddingX: theme.playerPadX,
       paddingY: theme.playerPadY,
     },

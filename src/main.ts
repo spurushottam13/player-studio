@@ -1,3 +1,6 @@
+// The self-hosted Material Icons ligature font backs every glyph in the studio
+// (see icons.ts) — load it before our own styles so `.mi` can build on it.
+import "material-icons/iconfont/filled.css";
 import "./style.css";
 import { Studio } from "./studio";
 import { createPalette } from "./ui/palette";

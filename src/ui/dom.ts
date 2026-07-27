@@ -1,5 +1,12 @@
 // Tiny DOM helper.
 
+// A spacer's width is a PERCENTAGE of the player container's width, so it keeps
+// its proportion across viewports. On the canvas it resolves through --player-w,
+// which the region editor publishes on .Player every render.
+export function spacerWidthCss(pct: number): string {
+  return `calc(var(--player-w) * ${pct} / 100)`;
+}
+
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   attrs: { class?: string; text?: string; title?: string; type?: string } = {},

@@ -11,20 +11,23 @@ import {
   DEFAULT_BG_RADIUS,
   DEFAULT_ICON_BG_PADDING,
   DEFAULT_ICON_BG_RADIUS,
+  DEFAULT_SPACER_WIDTH,
   ICON_BG_PADDING_MAX,
   ICON_BG_RADIUS_MAX,
   ICON_SIZE_MAX,
   ICON_SIZE_MIN,
   PLAYER_PADDING_MAX,
+  PLAYER_PADDING_STEP,
   SPACER_WIDTH_MAX,
   SPACER_WIDTH_MIN,
+  SPACER_WIDTH_STEP,
 } from "../../controls";
 import type { ControlId } from "../../controls";
 import { History } from "../../history";
 import { isFill, registry } from "../../registry";
 import { endDrag, getDraggingId, makeDraggable } from "../../dnd";
 import { appendControlBody, appendRemoveButton } from "../../ui/controlbody";
-import { el } from "../../ui/dom";
+import { el, spacerWidthCss } from "../../ui/dom";
 import { openPopover } from "../../ui/popover";
 import { createToolbar } from "../../ui/toolbar";
 import type { EditorInstance } from "../types";
@@ -34,11 +37,17 @@ import { buildRegionSpec } from "./spec";
 
 const REGION_LABEL: Record<RegionName, string> = { top: "Top bar", center: "Center", bottom: "Bottom bar" };
 
+// Percent values are half-step; trim "31.0" → "31" for readouts and CSS.
+const round = (v: number, step: number) => Math.round(v / step) * step;
+const fmt = (v: number) => String(Number(v.toFixed(2)));
+
 // Horizontal resize via a drag handle on the control's edge. Width is written
 // inline during the drag (a registry commit would re-render the canvas and
-// destroy the element under the pointer) and committed ONCE on release. The
-// control's HTML5 drag is suspended for the gesture (the volume-flyout
-// pattern) so dragging the handle never starts an item drag.
+// destroy the element under the pointer) and committed ONCE on release — in px
+// while dragging (that's what the pointer measures), converted to a percentage
+// of the player width by the caller. The control's HTML5 drag is suspended for
+// the gesture (the volume-flyout pattern) so dragging the handle never starts
+// an item drag.
 function attachResizeHandle(
   ctrl: HTMLElement,
   opts: {
@@ -187,6 +196,13 @@ export function createRegionEditor(): EditorInstance {
     el("div", { class: "stage" }, [player]),
   );
 
+  // The preview's current width — the reference every percentage resolves
+  // against (it is exactly what render() writes onto .Player).
+  const playerWidthPx = () => VIEWPORT_PX[state.getViewport()];
+  const pctToPx = (pct: number) => (pct / 100) * playerWidthPx();
+  const pxToSpacerPct = (px: number) =>
+    Math.min(Math.max(round((px / playerWidthPx()) * 100, SPACER_WIDTH_STEP), SPACER_WIDTH_MIN), SPACER_WIDTH_MAX);
+
   const regionEls: Record<RegionName, HTMLElement> = { top: topEl, center: centerEl, bottom: bottomEl };
   const caret = el("div", { class: "drop-caret" });
   let overEl: HTMLElement | null = null;
@@ -230,9 +246,10 @@ export function createRegionEditor(): EditorInstance {
       range.value = String(state.sizeOf(id));
       range.addEventListener("input", () => {
         readout.textContent = `${range.value}px`;
-        const svg = ctrlEl()?.querySelector("svg");
-        svg?.setAttribute("width", range.value);
-        svg?.setAttribute("height", range.value);
+        // The glyph is a ligature span (icons.ts): its font-size IS its size,
+        // and the box is pinned square so a per-icon background stays circular.
+        const glyph = ctrlEl()?.querySelector<HTMLElement>(".mi");
+        if (glyph) glyph.style.fontSize = glyph.style.width = glyph.style.height = `${range.value}px`;
       });
       range.addEventListener("change", () => state.setSize(id, Number(range.value)));
       body.append(el("div", { class: "popover-row" }, [el("span", { class: "popover-label", text: "Size" }), range, readout]));
@@ -246,9 +263,9 @@ export function createRegionEditor(): EditorInstance {
       const previewBg = () => paintIconBgOn(ctrlEl() ?? el("div"), toggle.checked ? { padding, radius } : null);
       const commitBg = () => (toggle.checked ? state.setIconBg(id, { padding, radius }) : state.clearIconBg(id));
 
-      const padRow = sliderRow("Padding", 0, ICON_BG_PADDING_MAX, padding, "px",
+      const padRow = sliderRow("Padding", { min: 0, max: ICON_BG_PADDING_MAX, value: padding, unit: "px" },
         (v) => { padding = v; previewBg(); }, () => commitBg());
-      const radRow = sliderRow("Radius", 0, ICON_BG_RADIUS_MAX, radius, "px",
+      const radRow = sliderRow("Radius", { min: 0, max: ICON_BG_RADIUS_MAX, value: radius, unit: "px" },
         (v) => { radius = v; previewBg(); }, () => commitBg());
       const refresh = () => { padRow.style.display = radRow.style.display = toggle.checked ? "" : "none"; };
       toggle.addEventListener("change", () => { previewBg(); commitBg(); refresh(); });
@@ -262,23 +279,24 @@ export function createRegionEditor(): EditorInstance {
     });
   };
 
-  // A small labelled range row for a popover.
+  // A small labelled range row for a popover. `step` is 1 for the px sliders and
+  // a half-unit for the percentage ones (a whole percent of the player is a
+  // coarse jump), so the readout formats the value rather than printing it raw.
   const sliderRow = (
     label: string,
-    min: number,
-    max: number,
-    value: number,
-    unit: string,
+    opts: { min: number; max: number; value: number; unit: string; step?: number },
     onInput: (v: number) => void,
     onCommit: (v: number) => void,
   ): HTMLElement => {
+    const { min, max, value, unit, step = 1 } = opts;
     const range = el("input", { type: "range" }) as HTMLInputElement;
     range.min = String(min);
     range.max = String(max);
-    range.value = String(value);
-    const out = el("span", { class: "popover-value", text: `${value}${unit}` });
+    range.step = String(step);
+    range.value = String(round(value, step));
+    const out = el("span", { class: "popover-value", text: `${fmt(value)}${unit}` });
     range.addEventListener("input", () => {
-      out.textContent = `${range.value}${unit}`;
+      out.textContent = `${fmt(Number(range.value))}${unit}`;
       onInput(Number(range.value));
     });
     range.addEventListener("change", () => onCommit(Number(range.value)));
@@ -307,46 +325,53 @@ export function createRegionEditor(): EditorInstance {
         if (bg && lane) positionBackground(bg, lane, padX, padY);
       };
       body.append(
-        sliderRow("Padding X", 0, BG_PADDING_MAX, padX0, "px",
+        sliderRow("Padding X", { min: 0, max: BG_PADDING_MAX, value: padX0, unit: "px" },
           (v) => { padX = v; reposition(); },
           () => registry.updateCustom(id, { paddingX: padX })),
-        sliderRow("Padding Y", 0, BG_PADDING_MAX, padY0, "px",
+        sliderRow("Padding Y", { min: 0, max: BG_PADDING_MAX, value: padY0, unit: "px" },
           (v) => { padY = v; reposition(); },
           () => registry.updateCustom(id, { paddingY: padY })),
-        sliderRow("Radius", 0, BG_RADIUS_MAX, radius0, "px",
+        sliderRow("Radius", { min: 0, max: BG_RADIUS_MAX, value: radius0, unit: "px" },
           (v) => { const bg = liveBg(); if (bg) bg.style.borderRadius = `${v}px`; },
           (v) => registry.updateCustom(id, { radius: v })),
       );
     });
   };
 
-  // Click a spacer → width slider popover (like the icon-size popover).
+  // Click a spacer → width slider popover (like the icon-size popover). The
+  // width is a % of the player container, so the preview writes the same calc()
+  // the renderer does.
   const openSpacerWidthPopover = (anchor: HTMLElement, id: ControlId): void => {
-    const width0 = registry.get(id)?.width ?? SPACER_WIDTH_MIN;
+    const width0 = registry.get(id)?.width ?? DEFAULT_SPACER_WIDTH;
     openPopover(anchor, (body) => {
       body.append(
-        sliderRow("Width", SPACER_WIDTH_MIN, SPACER_WIDTH_MAX, width0, "px",
+        sliderRow("Width",
+          { min: SPACER_WIDTH_MIN, max: SPACER_WIDTH_MAX, value: width0, unit: "%", step: SPACER_WIDTH_STEP },
           (v) => {
             const sp = player.querySelector<HTMLElement>(`.placed-control--spacer.${CSS.escape(id)}`);
-            if (sp) sp.style.width = `${v}px`;
+            if (sp) sp.style.width = spacerWidthCss(v);
           },
           (v) => registry.updateCustom(id, { width: v })),
       );
     });
   };
 
-  // Toolbar "Padding" tool → X / Y sliders for the whole .Player container.
-  // Preview writes the CSS vars live and re-snaps backgrounds (padding shifts
-  // the lanes); commit stores it in the theme.
+  // Toolbar "Padding" tool → X / Y sliders for the whole .Player container, both
+  // percentages (X of the player's width, Y of its height). Preview writes the
+  // CSS vars live — the stylesheet resolves them against --player-w / --player-h
+  // — and re-snaps backgrounds (padding shifts the lanes); commit stores it in
+  // the theme.
   const openPlayerPaddingPopover = (anchor: HTMLElement): void => {
     const t = state.getTheme();
     openPopover(anchor, (body) => {
       body.append(
-        sliderRow("Padding X", 0, PLAYER_PADDING_MAX, t.playerPadX, "px",
-          (v) => { player.style.setProperty("--pad-x", `${v}px`); positionAllBackgrounds(); },
+        sliderRow("Padding X",
+          { min: 0, max: PLAYER_PADDING_MAX, value: t.playerPadX, unit: "%", step: PLAYER_PADDING_STEP },
+          (v) => { player.style.setProperty("--pad-x", fmt(v)); positionAllBackgrounds(); },
           (v) => state.setTheme({ playerPadX: v })),
-        sliderRow("Padding Y", 0, PLAYER_PADDING_MAX, t.playerPadY, "px",
-          (v) => { player.style.setProperty("--pad-y", `${v}px`); positionAllBackgrounds(); },
+        sliderRow("Padding Y",
+          { min: 0, max: PLAYER_PADDING_MAX, value: t.playerPadY, unit: "%", step: PLAYER_PADDING_STEP },
+          (v) => { player.style.setProperty("--pad-y", fmt(v)); positionAllBackgrounds(); },
           (v) => state.setTheme({ playerPadY: v })),
       );
     });
@@ -384,11 +409,13 @@ export function createRegionEditor(): EditorInstance {
     if (iconBg) paintIconBgOn(ctrl, iconBg);
     appendRemoveButton(ctrl, (x) => state.remove(x), id);
     if (def?.kind === "spacer") {
+      // The gesture works in px (that's what the pointer measures); the commit
+      // converts back to the stored % of the player width.
       attachResizeHandle(ctrl, {
         edge: "right",
-        min: SPACER_WIDTH_MIN,
-        max: () => SPACER_WIDTH_MAX,
-        commit: (px) => registry.updateCustom(id, { width: px }),
+        min: pctToPx(SPACER_WIDTH_MIN),
+        max: () => pctToPx(SPACER_WIDTH_MAX),
+        commit: (px) => registry.updateCustom(id, { width: pxToSpacerPct(px) }),
       });
     }
     wirePropertyClick(ctrl, id);
@@ -475,16 +502,21 @@ export function createRegionEditor(): EditorInstance {
 
   const render = () => {
     const t = state.getTheme();
-    player.style.setProperty("--primary", t.primary);
-    player.style.setProperty("--secondary", t.secondary);
-    player.style.setProperty("--pad-x", `${t.playerPadX}px`);
-    player.style.setProperty("--pad-y", `${t.playerPadY}px`);
     const vp = state.getViewport();
     const w = VIEWPORT_PX[vp];
     // `vertical` is portrait 9:16 (taller than wide); the rest are 16:9 landscape.
     const h = vp === "vertical" ? Math.round((w * 16) / 9) : Math.round((w * 9) / 16);
     player.style.width = `${w}px`;
     player.style.height = `${h}px`;
+    player.style.setProperty("--primary", t.primary);
+    player.style.setProperty("--secondary", t.secondary);
+    // Container padding and spacer widths are PERCENTAGES — publish the player
+    // box so the stylesheet can resolve them (X against width, Y against
+    // height). --pad-x / --pad-y are unitless percentages, not lengths.
+    player.style.setProperty("--player-w", `${w}px`);
+    player.style.setProperty("--player-h", `${h}px`);
+    player.style.setProperty("--pad-x", fmt(t.playerPadX));
+    player.style.setProperty("--pad-y", fmt(t.playerPadY));
     for (const [v, btn] of vpButtons) btn.classList.toggle("seg-btn--active", v === vp);
     for (const region of REGION_NAMES) renderRegion(region);
     // Backgrounds snap to their lanes only after the lanes are laid out.
@@ -606,6 +638,11 @@ export function createRegionEditor(): EditorInstance {
   // control that's already on the canvas, not just the palette).
   registry.subscribe(render);
   render();
+  // This first render runs while `panel` is still DETACHED (main.ts appends it
+  // right after the Studio is constructed), so the lanes have no layout box yet
+  // and every background snapped to a 0×0 lane. Re-snap once we're in the
+  // document — by the next frame main.ts has mounted us.
+  requestAnimationFrame(positionAllBackgrounds);
 
   return {
     id: "region",

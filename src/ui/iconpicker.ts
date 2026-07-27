@@ -1,8 +1,9 @@
-// Icon picker modal over the full Lucide catalog (~1958 glyphs). Used both to add
-// a custom control and to override an existing control's icon. Resolves to the
-// chosen Lucide NAME (a string) — never raw SVG. Picking is name-only.
+// Icon picker modal over the full Material Icons catalog. Used both to add a
+// custom control and to override an existing control's icon. Resolves to the
+// chosen Material NAME (the icon's key, e.g. "play_arrow") — never raw SVG.
+// Picking is name-only.
 
-import { iconNames, renderIcon } from "../icons";
+import { ICON_COUNT, iconNames, renderIcon } from "../icons";
 import { el } from "./dom";
 
 const ALL_NAMES = iconNames();
@@ -14,7 +15,7 @@ export interface PickIconOpts {
 }
 
 // Normalize for matching: lowercase, strip non-alphanumerics so "full screen"
-// and "fullscreen" both match the export name "Fullscreen".
+// and "fullscreen" both match the icon name "fullscreen".
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 export function pickIcon(opts: PickIconOpts = {}): Promise<string | null> {
@@ -32,7 +33,7 @@ export function pickIcon(opts: PickIconOpts = {}): Promise<string | null> {
     };
 
     const search = el("input", { class: "icon-search", type: "text" }) as HTMLInputElement;
-    search.placeholder = "Search 1958 Lucide icons…";
+    search.placeholder = `Search ${ICON_COUNT} Material icons…`;
     const grid = el("div", { class: "icon-grid" });
     const hint = el("p", { class: "icon-picker-hint" });
 

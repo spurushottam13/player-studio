@@ -3,7 +3,7 @@
 // a placed control back here to take it off the player. Each chip exposes inline
 // actions: change its icon (any chip), reset an override (overridden built-ins),
 // and delete (custom controls). "Add custom control" creates a new chip from any
-// Lucide icon. Placed-state, removal, and the collapse bin proxy to the active editor.
+// Material icon. Placed-state, removal, and the collapse bin proxy to the active editor.
 
 import type { ControlId } from "../controls";
 import { renderIcon } from "../icons";
@@ -36,7 +36,7 @@ export function createPalette(studio: Studio): HTMLElement {
     }),
   );
 
-  // "+ Add custom control" — pick any Lucide icon + a name → a new draggable chip.
+  // "+ Add custom control" — pick any Material icon + a name → a new draggable chip.
   const addBtn = el("button", { class: "btn add-control-btn", text: "+ Add custom control" });
   addBtn.addEventListener("click", async () => {
     const icon = await pickIcon({ title: "Pick an icon for your control" });

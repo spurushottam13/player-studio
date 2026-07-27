@@ -365,6 +365,20 @@ body {
   box-shadow: 0 12px 40px rgba(31, 39, 51, 0.18);
 }
 
+/* ---------- Icons (Material Icons ligature glyphs) ---------- */
+/* Every glyph in the studio is a <span class="mi material-icons">icon_name</span>
+   (see icons.ts): the icon's NAME is its key and its text content, and the font
+   ligature turns it into the glyph. The @font-face + font-family come from the
+   self-hosted `material-icons` package CSS (imported in main.ts); this rule only
+   pins the box square at the inline font-size so a per-icon background stays a
+   clean circle. */
+.mi {
+  flex: none;
+  overflow: hidden;
+  vertical-align: middle;
+  user-select: none;
+}
+
 /* ---------- Placed controls (shared visuals) ---------- */
 .placed-control {
   position: relative; /* anchors .resize-handle and the remove × to the control */
@@ -379,8 +393,8 @@ body {
 .placed-control:active {
   cursor: grabbing;
 }
-.placed-control svg {
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+.placed-control .mi {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
   pointer-events: none;
 }
 /* Per-icon background: a shape drawn directly behind ONE icon (a circle/badge).
@@ -398,7 +412,7 @@ body {
   z-index: 0;
   pointer-events: none;
 }
-.placed-control.has-icon-bg svg {
+.placed-control.has-icon-bg .mi {
   position: relative;
   z-index: 1;
 }
@@ -515,8 +529,8 @@ body.dnd-active .volume-flyout {
 
 /* ---------- Spacer ---------- */
 /* A blank block between controls: full lane height, width set inline from its
-   def. The dashed outline is an editor-only affordance — spacers export as
-   pure empty space. */
+   def as a % of the player container (calc against --player-w). The dashed
+   outline is an editor-only affordance — spacers export as pure empty space. */
 .placed-control--spacer {
   align-self: stretch;
   min-height: 22px;
@@ -680,8 +694,13 @@ body.dnd-active .stage.show-grid .cell {
 .Player--region {
   display: flex;
   flex-direction: column;
-  /* Container padding is user-adjustable (toolbar → Padding); vars set inline. */
-  padding: var(--pad-y, 10px) var(--pad-x, 10px);
+  /* Container padding is user-adjustable (toolbar → Padding) and stored as a
+     PERCENTAGE: --pad-x/--pad-y are unitless percentages resolved against the
+     player box (X against its width, Y against its height) — all four vars are
+     set inline per render. Percentage padding in CSS would resolve BOTH axes
+     against the width, hence the explicit calc against --player-h. */
+  padding: calc(var(--player-h, 360px) * var(--pad-y, 1) / 100)
+    calc(var(--player-w, 640px) * var(--pad-x, 1.5) / 100);
 }
 .region {
   display: flex;
@@ -873,7 +892,7 @@ body.dnd-active .row-gap {
 .collapsed-chip.is-dragging {
   opacity: 0.4;
 }
-.collapsed-chip svg {
+.collapsed-chip .mi {
   pointer-events: none;
 }
 .collapsed-chip-remove {

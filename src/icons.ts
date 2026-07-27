@@ -1,32 +1,44 @@
-// Icon resolution. An icon is just a Lucide export NAME (a string, e.g. "Heart").
-// The same value is what the palette renders, what the canvas renders, and what
-// player.json carries verbatim — no raw SVG anywhere. Each platform maps the name
-// to its own glyph set. `icons[name]` is the same IconNode that
-// `import { Heart } from "lucide"` yields; we just resolve it lazily by name.
+// Icon resolution. An icon is just a Material Icons NAME (the ligature string,
+// e.g. "play_arrow") — and that name IS the key: it keys the catalog here, it is
+// what the palette and canvas render, and it is what player.json carries
+// verbatim. No raw SVG anywhere; each platform resolves the same name in its own
+// Material set (web: the ligature font; Android: the Material icon drawable;
+// iOS: the mapped asset). `versions.json` ships with the `material-icons`
+// package keyed by icon name (its value is the release the glyph landed in,
+// which we don't need) — so its keys ARE the catalog.
 
-import { createElement, icons as lucideIcons } from "lucide";
-import type { IconNode } from "lucide";
-
-// `icons` is typed as a concrete object literal (no string index); widen it so we
-// can resolve glyphs by an arbitrary saved/searched name.
-const icons = lucideIcons as Record<string, IconNode>;
+import ICONS from "material-icons/_data/versions.json";
 
 export type IconName = string;
 
-const FALLBACK = "CircleHelp"; // drawn if a saved name no longer exists in Lucide
+const NAMES = Object.keys(ICONS).sort();
 
-// Render a Lucide name to a live <svg> for the studio UI.
-export function renderIcon(name: IconName, size = 20): SVGElement {
-  const node = icons[name] ?? icons[FALLBACK];
-  return createElement(node, { width: String(size), height: String(size) });
+// How many glyphs this build ships (shown in the icon picker).
+export const ICON_COUNT = NAMES.length;
+
+const FALLBACK = "help_outline"; // drawn if a saved name isn't in this Material build
+
+// Render a Material name to a live element for the studio UI. The font maps the
+// name to its glyph as a ligature, so the element's text content IS the icon
+// key. The box is pinned square at `size` so a per-icon background stays a clean
+// circle.
+export function renderIcon(name: IconName, size = 20): HTMLElement {
+  const span = document.createElement("span");
+  span.className = "mi material-icons";
+  span.textContent = name in ICONS ? name : FALLBACK;
+  span.style.fontSize = `${size}px`;
+  span.style.width = `${size}px`;
+  span.style.height = `${size}px`;
+  span.setAttribute("aria-hidden", "true");
+  return span;
 }
 
 // Cheap guard used when sanitizing saved data / validating picker input.
 export function isKnownIcon(name: string): boolean {
-  return name in icons;
+  return name in ICONS;
 }
 
-// The full Lucide catalog (sorted), for the icon picker.
+// The full Material catalog (sorted), for the icon picker. Never mutated.
 export function iconNames(): string[] {
-  return Object.keys(icons).sort();
+  return NAMES;
 }

@@ -11,6 +11,8 @@ import {
   DEFAULT_SPACER_WIDTH,
   isControlKind,
   isTextType,
+  SPACER_WIDTH_MAX,
+  SPACER_WIDTH_MIN,
   TEXT_TYPE_BY_TYPE,
   textOf,
 } from "./controls";
@@ -18,8 +20,14 @@ import type { ControlDef, ControlId, ControlKind, TextType } from "./controls";
 import { isKnownIcon } from "./icons";
 import type { IconName } from "./icons";
 
-const STORAGE_KEY = "player-studio:registry";
-const FALLBACK_ICON = "CircleHelp";
+// `:v2` — spacer widths turned from px into a PERCENTAGE of the player width, so
+// a v1 save would read a 200px spacer as 200%. Bumping the key retires it.
+const STORAGE_KEY = "player-studio:registry:v2";
+const FALLBACK_ICON = "help_outline";
+// Chip glyphs for the two blank/decorative elements. Cosmetic (dashboard-only):
+// the player renders a spacer as a gap and a background as a layer, never as an icon.
+const SPACER_ICON = "space_bar";
+const BACKGROUND_ICON = "format_color_fill";
 
 type Listener = () => void;
 
@@ -102,13 +110,14 @@ export class ControlRegistry {
     return id;
   }
   // Add a SPACER control: a blank block that adds horizontal space between
-  // controls. Width is edited in-canvas via its resize handle.
+  // controls. Width (a % of the player width) is edited in-canvas via its
+  // resize handle.
   addSpacer(): ControlId {
     const id = this.uniqueId("CUSTOM_spacer");
     this.custom.set(id, {
       id,
       label: "Spacer",
-      icon: isKnownIcon("RectangleHorizontal") ? "RectangleHorizontal" : "Square",
+      icon: SPACER_ICON,
       kind: "spacer",
       custom: true,
       width: DEFAULT_SPACER_WIDTH,
@@ -128,7 +137,7 @@ export class ControlRegistry {
     this.custom.set(id, {
       id,
       label: "Background",
-      icon: isKnownIcon("PaintBucket") ? "PaintBucket" : "Square",
+      icon: BACKGROUND_ICON,
       kind: "background",
       custom: true,
       defaultSpan: 1,
@@ -138,7 +147,7 @@ export class ControlRegistry {
     return id;
   }
   // Seed the registry entries the canonical default layout references (see
-  // state.defaultRegions): three background layers, two 200px spacers, a Time
+  // state.defaultRegions): three background layers, two 31%-wide spacers, a Time
   // Left readout, and the transport-icon look (Backward/Forward 30px + Play 48px,
   // each with a circular background). Runs on a FRESH install and on every
   // resetToDefault — so it FORCES these entries (a reset restores the default
@@ -149,12 +158,12 @@ export class ControlRegistry {
     // `extra` carries the per-background padding/radius overrides (unique CUSTOM_*
     // ids, so per-instance) baked into the default look.
     const bg = (id: ControlId, extra: Partial<ControlDef> = {}): ControlDef => ({
-      id, label: "Background", icon: isKnownIcon("PaintBucket") ? "PaintBucket" : "Square",
+      id, label: "Background", icon: BACKGROUND_ICON,
       kind: "background", custom: true, defaultSpan: 1, maxSpan: 1, ...extra,
     });
     const spacer = (id: ControlId): ControlDef => ({
-      id, label: "Spacer", icon: isKnownIcon("RectangleHorizontal") ? "RectangleHorizontal" : "Square",
-      kind: "spacer", custom: true, width: 200, defaultSpan: 1, maxSpan: 1,
+      id, label: "Spacer", icon: SPACER_ICON,
+      kind: "spacer", custom: true, width: DEFAULT_LAYOUT_SPACER_WIDTH, defaultSpan: 1, maxSpan: 1,
     });
     this.custom.set(D.bgBottom, bg(D.bgBottom, { paddingX: 4 }));
     this.custom.set(D.bgTopRight, bg(D.bgTopRight, { paddingX: 5, paddingY: 5, radius: 0 }));
@@ -186,6 +195,8 @@ export class ControlRegistry {
   resetIcon(id: ControlId): void {
     if (this.overrides.delete(id)) this.changed();
   }
+  // `width` (spacers) is a percentage of the player container width; the
+  // background paddings/radius stay in px.
   updateCustom(
     id: ControlId,
     partial: Partial<Pick<ControlDef, "label" | "icon" | "width" | "paddingX" | "paddingY" | "radius">>,
@@ -275,7 +286,11 @@ export class ControlRegistry {
           ...(typeof def.separator === "string" ? { separator: def.separator } : {}),
           ...(typeof def.variable === "string" ? { variable: def.variable } : {}),
           ...(typeof def.showNumber === "boolean" ? { showNumber: def.showNumber } : {}),
-          ...(typeof def.width === "number" && Number.isFinite(def.width) && def.width > 0 ? { width: def.width } : {}),
+          // Width is a percentage of the player width — clamp it into range so a
+          // hand-edited or stale value can't produce an off-canvas spacer.
+          ...(typeof def.width === "number" && Number.isFinite(def.width) && def.width > 0
+            ? { width: Math.min(Math.max(def.width, SPACER_WIDTH_MIN), SPACER_WIDTH_MAX) }
+            : {}),
           ...(typeof def.color === "string" && /^#[0-9a-fA-F]{6}$/.test(def.color) ? { color: def.color } : {}),
           ...(typeof def.opacity === "number" && Number.isFinite(def.opacity)
             ? { opacity: Math.min(Math.max(def.opacity, 0), 1) }
@@ -295,13 +310,17 @@ export class ControlRegistry {
       }
       for (const entry of parsed.overrides ?? []) {
         const [id, icon] = entry ?? [];
-        // Drop overrides for ids that aren't built-ins or names Lucide no longer has.
+        // Drop overrides for ids that aren't built-ins, or names this Material build lacks.
         if (typeof id === "string" && typeof icon === "string" && BUILTIN_BY_ID.has(id) && isKnownIcon(icon)) {
           this.overrides.set(id, icon);
         }
       }
   }
 }
+
+// The transport spacers in the canonical default layout: 31% of the player width
+// each (what the old fixed 200px came to on the 640px default preview).
+const DEFAULT_LAYOUT_SPACER_WIDTH = 31; // %
 
 // Deterministic ids for the custom controls the default layout references, so
 // state.defaultRegions can name them and seedDefaults can create them. (The

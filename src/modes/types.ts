@@ -3,6 +3,7 @@
 // implementation — it owns its state, drag-drop, and native spec generator. The
 // POC compared three models (grid / region / free); region was chosen.
 
+import { DEFAULT_PLAYER_PADDING_X, DEFAULT_PLAYER_PADDING_Y } from "../controls";
 import type { ControlId } from "../controls";
 
 export type ModeId = "region";
@@ -36,10 +37,11 @@ export interface Theme {
   // edited via the one "Background" tool in the stage toolbar.
   bgColor: string;
   bgOpacity: number; // 0–1
-  // Padding of the whole .Player container (px), edited via the toolbar's
-  // "Padding" tool. Global across the layout.
-  playerPadX: number;
-  playerPadY: number;
+  // Padding of the whole .Player container, edited via the toolbar's "Padding"
+  // tool. Global across the layout, and a PERCENTAGE of the container so the
+  // inset scales with the player: X of its width, Y of its height.
+  playerPadX: number; // % of container width
+  playerPadY: number; // % of container height
 }
 
 export const DEFAULT_THEME: Theme = {
@@ -47,6 +49,6 @@ export const DEFAULT_THEME: Theme = {
   secondary: "#ffffff",
   bgColor: "#000000",
   bgOpacity: 0.5,
-  playerPadX: 9,
-  playerPadY: 4,
+  playerPadX: DEFAULT_PLAYER_PADDING_X,
+  playerPadY: DEFAULT_PLAYER_PADDING_Y,
 };

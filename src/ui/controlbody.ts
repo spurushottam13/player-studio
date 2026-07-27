@@ -7,7 +7,7 @@ import { DEFAULT_ICON_SIZE, DEFAULT_SPACER_WIDTH } from "../controls";
 import type { ControlDef, ControlId } from "../controls";
 import { renderIcon } from "../icons";
 import { registry } from "../registry";
-import { el } from "./dom";
+import { el, spacerWidthCss } from "./dom";
 
 // `iconSize` is the per-viewport size for this placement (the caller resolves it
 // from RegionState); defaults to the theme size when not given.
@@ -24,9 +24,10 @@ export function appendControlBody(ctrl: HTMLElement, def: ControlDef, iconSize: 
     ctrl.classList.add("placed-control--text");
     ctrl.append(el("span", { class: "control-text", text: def.text ?? "00:00" }));
   } else if (def.kind === "spacer") {
-    // Blank block: width from its def, full lane height via CSS align-self.
+    // Blank block: width is a % of the player container (resolved against
+    // --player-w, published per render), full lane height via CSS align-self.
     ctrl.classList.add("placed-control--spacer");
-    ctrl.style.width = `${def.width ?? DEFAULT_SPACER_WIDTH}px`;
+    ctrl.style.width = spacerWidthCss(def.width ?? DEFAULT_SPACER_WIDTH);
   } else {
     // Backgrounds never reach here (the region editor renders them as row
     // layers), so the fallback stays the icon branch.

@@ -12,7 +12,7 @@ This doc generalizes the working code in [`src/modes/region/`](./src/modes/regio
 [`src/history.ts`](./src/history.ts), [`src/dnd.ts`](./src/dnd.ts), and
 [`src/ui/`](./src/ui/).
 
-> **Schema:** the dashboard emits **`schemaVersion` "3.1"** — the single current
+> **Schema:** the dashboard emits **`schemaVersion` "3.2"** — the single current
 > version. Per-**viewport** layouts (`default | 490 | 300 | vertical` — three
 > landscape width breakpoints plus a portrait 9:16 design) of lane-keyed
 > rows, each viewport with its own `collapseInSetting` list, under one shared
@@ -20,6 +20,15 @@ This doc generalizes the working code in [`src/modes/region/`](./src/modes/regio
 > controls, text/spacer/background elements, icon overrides, and per-icon
 > appearance (`size`, `background`) used anywhere in the document
 > ([§2b](#2b-the-control-registry) / [§5](#5-serializer--internal-model--output-json)).
+
+> **What changed in 3.2** (from 3.1): an `icon` is a **Material icon name**
+> (`"play_arrow"`, lower_snake_case — the icon's own catalog key) instead of a
+> Lucide export name ([§2b](#icons-are-material-names)); a **spacer's `width`** is a
+> **% of the player container's width**; and **`theme.paddingX` / `paddingY`** are
+> **percentages** of the container's width / height. Everything else is unchanged,
+> and every other measurement (icon `size`, lane-background padding/radius) stays
+> in px. Both storage keys are `:v2` — a pre-3.2 save would read `200` px as 200%,
+> so old local state is retired rather than migrated.
 
 > **17 built-ins.** All time readouts (`TimeConsumed`, `TimeLeft`,
 > `TimeDuration`, `TimeAll`), plus Current Chapter, Dynamic Text, and Title, are
@@ -45,7 +54,7 @@ Pieces:
 
 1. **Palette (left)** — draggable control chips: the **17 built-ins plus any
    user-added custom control, text control, spacer, or background** (drag source +
-   remove target). Above them: **"+ Add custom control"** (pick any Lucide icon),
+   remove target). Above them: **"+ Add custom control"** (pick any Material icon),
    **"+ Add text"**, **"+ Add spacer"**, **"+ Add background"**; each chip also
    exposes inline actions to **change its icon**, **reset** an override, or
    **delete** a custom control (§6d). Below them a **"Collapse in Setting"** bin.
@@ -105,8 +114,10 @@ interface Theme {
   secondary: string; // icon + text color
   bgColor: string; // shared fill for EVERY background (lane + per-icon)
   bgOpacity: number; // 0–1
-  playerPadX: number; // .Player container padding, left+right (px)
-  playerPadY: number; // top+bottom (px)
+  // .Player container padding as a PERCENTAGE of the container, so it scales
+  // with the preview (and with the real player) instead of being a fixed inset.
+  playerPadX: number; // left+right, % of the container's WIDTH
+  playerPadY: number; // top+bottom, % of the container's HEIGHT
 }
 ```
 
@@ -145,10 +156,10 @@ type ControlKind = "icon" | "text" | "slider" | "spacer" | "background";
 
 | kind         | what                                                        | added via            |
 | ------------ | ---------------------------------------------------------- | -------------------- |
-| `icon`       | a single Lucide glyph (most controls)                      | built-in / Add ctrl  |
+| `icon`       | a single Material glyph (most controls)                    | built-in / Add ctrl  |
 | `text`       | a readout (time / chapter / dynamic / title) — §6f         | + Add text           |
 | `slider`     | a range that fills width (`VideoProgress` only)            | built-in             |
-| `spacer`     | a blank block that adds horizontal space; user-set `width` | + Add spacer (§6g)   |
+| `spacer`     | a blank block that adds horizontal space; user-set `width` (% of the player width) | + Add spacer (§6g) |
 | `background` | a color layer behind a lane's controls; user-set padding/radius | + Add background (§6g) |
 
 ### A control's identity: the control id
@@ -199,7 +210,7 @@ class ControlRegistry {
   // creators
   addCustom({ label, icon }): ControlId;   // a CUSTOM_<slug> icon control
   addText({ textType, separator?, variable?, showNumber? }): ControlId; // §6f
-  addSpacer(): ControlId;                  // kind "spacer", width 24 (§6g)
+  addSpacer(): ControlId;                  // kind "spacer", width 4 (% of player width) (§6g)
   addBackground(): ControlId;              // kind "background" (§6g)
 
   // edits
@@ -215,7 +226,7 @@ export const registry = new ControlRegistry();
 ```
 
 > **`seedDefaults()` seeds the default's custom controls.** The canonical default
-> layout references seeded registry entries — three background layers, two 200px
+> layout references seeded registry entries — three background layers, two 31%-wide
 > spacers, a Time Left readout. `seedDefaults()` creates them on a **fresh install**
 > and on every **`state.resetToDefault()`**. The transport look (Backward/Forward
 > 30px + Play 48px, each with a circular background) is **per-viewport**, so it's
@@ -224,13 +235,25 @@ export const registry = new ControlRegistry();
 > survive. Deterministic ids (`DEFAULT_CONTROL_IDS`) let the default layout name the
 > seeded controls.
 
-### Icons are Lucide **names**
+### Icons are Material **names**
 
-An icon is a **Lucide export name** (a string, e.g. `"Heart"`), never raw SVG.
-[`src/icons.ts`](./src/icons.ts) resolves a name to an `<svg>` via `renderIcon(name, size)`
-(with a `CircleHelp` fallback) and exposes the full catalog for the icon picker.
-The same name is written into the `controls` block (§5), so the schema stays
-portable — each platform maps the name to its own glyph set.
+An icon is a **Material Icons name** — the icon's own key in the Material catalog,
+lower_snake_case (`"play_arrow"`, `"closed_caption"`) — never raw SVG.
+[`src/icons.ts`](./src/icons.ts) resolves a name via `renderIcon(name, size)` and
+exposes the ~2,100-name catalog to the icon picker. The catalog itself is the
+`material-icons` package's `versions.json`, which is **keyed by icon name**, so
+"the name" and "the key" are the same string end to end.
+
+- `renderIcon` returns a **ligature span** — `<span class="mi material-icons">play_arrow</span>`
+  — not an `<svg>`: the self-hosted font turns the name into the glyph, so the
+  element's text content _is_ the icon key. It pins the box square at `size`, which
+  is what keeps a per-icon background a clean circle. Anything reaching into a
+  placed control's glyph should query `.mi` and write `font-size`, not `svg`
+  width/height attributes.
+- Unknown names fall back to `help_outline`.
+- The same name is written into the `controls` block (§5), so the schema stays
+  portable: each platform looks the name up in its own Material set (see
+  [`PLAYER_IMPLEMENTATION.md` §7f](./PLAYER_IMPLEMENTATION.md#7f-icons-are-material-names)).
 
 - A registry edit fans out as a normal change: `Studio` re-emits on
   `registry.subscribe`, so palette, canvas, and the code panel all refresh live.
@@ -268,6 +291,7 @@ class RegionState {
 
   // ---- theme + lifecycle ----
   getTheme(): Theme;
+  // playerPadX/playerPadY are percentages of the container (0–10, 0.5 steps).
   setTheme(partial: Partial<Theme>): void; // primary/secondary/bgColor/bgOpacity/playerPadX/playerPadY
   clear(): void;              // empties the ACTIVE viewport
   resetToDefault(): void;     // re-seeds the full default (registry + default viewport)
@@ -286,9 +310,12 @@ Invariants baked into the store:
   drop the id from wherever it was.
 - **Prune empty rows** and notify subscribers after every mutation.
 - **Setting is auto-managed** — §3a.
-- **Persist** to `localStorage` (`player-studio:region-layout`) as
+- **Persist** to `localStorage` (`player-studio:region-layout:v2`) as
   `{ layouts, theme, active }`. The registry persists **separately**
-  (`player-studio:registry`), so clearing a layout never wipes custom controls.
+  (`player-studio:registry:v2`), so clearing a layout never wipes custom controls.
+  Both keys carry the `:v2` suffix because 3.2 changed the units of the padding
+  and spacer-width fields they hold (§ schema note) — a v1 save is dropped, not
+  migrated, so it can't be read as a 200% spacer.
 - **Registry-aware load:** the `registry` singleton constructs (and loads/seeds) at
   import time, _before_ any `RegionState`, so layout sanitization can resolve custom
   ids; an id whose `registry.get(id)` is undefined is **dropped** (evicts ghost ids).
@@ -411,7 +438,7 @@ function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
           ...(def?.separator !== undefined ? { separator: def.separator } : {}),
           ...(def?.variable !== undefined ? { variable: def.variable } : {}),
           ...(def?.showNumber !== undefined ? { showNumber: def.showNumber } : {}),
-          ...(def?.kind === "spacer" && def?.width !== undefined ? { width: def.width } : {}),
+          ...(def?.kind === "spacer" && def?.width !== undefined ? { width: def.width } : {}), // % of player width
           ...(def?.kind === "background" && def?.paddingX !== undefined ? { paddingX: def.paddingX } : {}),
           ...(def?.kind === "background" && def?.paddingY !== undefined ? { paddingY: def.paddingY } : {}),
           ...(def?.kind === "background" && def?.radius !== undefined ? { radius: def.radius } : {}),
@@ -438,9 +465,10 @@ function buildViewportStyles(state: RegionState, vp: Viewport): Record<string, u
 
 - **Background color/opacity are never per-control** — the shared
   `theme.backgroundColor` / `backgroundOpacity` fill lane **and** per-icon backgrounds.
-- A **lane background** decl carries only `paddingX` / `paddingY` / `radius`; a
-  **spacer** carries `width`; both are unique `CUSTOM_*` ids, so per-instance. A
-  **per-icon size/background** rides in each viewport's `styles`, not the decl.
+- A **lane background** decl carries only `paddingX` / `paddingY` / `radius` (px); a
+  **spacer** carries `width` (**% of the player container's width**); both are unique
+  `CUSTOM_*` ids, so per-instance. A **per-icon size/background** rides in each
+  viewport's `styles`, not the decl.
 
 ### Whole-document build
 
@@ -461,7 +489,7 @@ function buildRegionSpec(state: RegionState) {
   }
   const controls = buildControlDecls(collectUsedIds(state));
   return {
-    schemaVersion: "3.1",
+    schemaVersion: "3.2",
     layoutModel: "region",
     theme: {
       primary: theme.primary,
@@ -471,8 +499,8 @@ function buildRegionSpec(state: RegionState) {
       gap: 8,
       backgroundColor: theme.bgColor, // shared across all backgrounds
       backgroundOpacity: theme.bgOpacity,
-      paddingX: theme.playerPadX, // player container padding
-      paddingY: theme.playerPadY,
+      paddingX: theme.playerPadX, // container padding, % of its WIDTH
+      paddingY: theme.playerPadY, // ...and % of its HEIGHT
     },
     ...(Object.keys(controls).length ? { controls } : {}), // omit when empty
     viewports,
@@ -493,17 +521,26 @@ later a `PUT` to the layout API. This is exactly the shape in
 Render the **active viewport's** regions against a realistic preview. (Reference:
 [`src/modes/region/editor.ts`](./src/modes/region/editor.ts).)
 
-Per render: apply the theme CSS vars — `--primary`, `--secondary`, and the player
-container padding `--pad-x` / `--pad-y`; for each region emit a `gap`, each row (3
-lanes), and a trailing `gap`; an empty region shows a "Drop here" placeholder that
-is itself a `gap` target. Each placed control renders **by `kind`**:
+Per render: apply the theme CSS vars — `--primary`, `--secondary`, the player box
+`--player-w` / `--player-h`, and the container padding `--pad-x` / `--pad-y`; for
+each region emit a `gap`, each row (3 lanes), and a trailing `gap`; an empty region
+shows a "Drop here" placeholder that is itself a `gap` target. Each placed control
+renders **by `kind`**:
+
+> **The two percentage vars resolve against the player box.** `--pad-x` / `--pad-y`
+> are **unitless percentages**, not lengths; the stylesheet turns them into padding
+> with `calc(var(--player-h) * var(--pad-y) / 100) calc(var(--player-w) * var(--pad-x) / 100)`,
+> and a spacer's width is `calc(var(--player-w) * <width> / 100)`. Plain CSS `%`
+> padding would resolve **both** axes against the width, which is why the Y axis
+> goes through `--player-h` explicitly. Switching viewports rewrites `--player-w` /
+> `--player-h`, so every padding and spacer rescales with no layout edit.
 
 | kind         | rendered as                                                                 |
 | ------------ | --------------------------------------------------------------------------- |
 | `icon`       | `renderIcon(registry.iconOf(id), state.sizeOf(id))` + optional per-icon background (both per-viewport) |
 | `text`       | the resolved `def.text` string (`00:00`, chapter title, …)                  |
 | `slider`     | a decorative `<input range>` that flex-fills                                |
-| `spacer`     | a blank stretch-height block at its `width` (§6g)                           |
+| `spacer`     | a blank stretch-height block, `width`% of the player width (§6g)            |
 | `background` | an absolutely-positioned backdrop layer, rendered specially (§6g)           |
 
 plus a `×` remove button. The canvas re-renders on **registry** changes too (not
@@ -531,10 +568,15 @@ live preview (direct DOM writes) and commit-on-release (one undo step per gestur
   viewport's** `styles` (`state.setSize` / `state.setIconBg`), so the same icon can
   look different per viewport. Radius renders as `min(radius, 50%)` on a square box,
   so a high value is a perfect circle.
-- **Spacer** → a **Width** slider (like icon size); a right-edge resize handle
-  works too.
-- **Background** (lane) → **Padding X** / **Padding Y** / **Radius** sliders. Color
-  and opacity are _not_ here — they're the shared toolbar tool (§7).
+- **Spacer** → a **Width** slider, in **% of the player width** (1–90, 0.5 steps);
+  a right-edge resize handle works too. The handle drags in px (that's what the
+  pointer measures) and converts back to a percentage on release.
+- **Background** (lane) → **Padding X** / **Padding Y** / **Radius** sliders (px).
+  Color and opacity are _not_ here — they're the shared toolbar tool (§7).
+
+> Slider rows take `{ min, max, value, unit, step }`: `step` is 1 for the px
+> sliders and 0.5 for the percentage ones — a whole percent of the player is a
+> ~6px jump at the default width, too coarse to land on.
 
 ### 6c. Viewport switcher
 
@@ -563,9 +605,11 @@ every change. Affordances:
 
 ### 6e. Icon picker (`pickIcon`)
 
-A modal over the full Lucide catalog ([`src/ui/iconpicker.ts`](./src/ui/iconpicker.ts));
-`pickIcon(opts?): Promise<string | null>` resolves the chosen Lucide **name**. Used
-by "Add custom control" and "Change icon".
+A modal over the full Material catalog (~2,100 glyphs;
+[`src/ui/iconpicker.ts`](./src/ui/iconpicker.ts)); `pickIcon(opts?): Promise<string | null>`
+resolves the chosen Material **name**. Used by "Add custom control" and "Change
+icon". Search normalizes both sides (lowercase, non-alphanumerics stripped), so
+"full screen", "fullscreen" and "full_screen" all find `fullscreen`.
 
 ### 6f. Text controls ("+ Add text")
 
@@ -594,8 +638,10 @@ Two one-click creator buttons — **"+ Add spacer"** and **"+ Add background"**.
 mint a `CUSTOM_*` control and appear as normal draggable chips.
 
 - **Spacer** (`addSpacer`, `kind: "spacer"`) — a blank block that stretches to the
-  lane/row height and adds horizontal space (default `width` 24px). Resize it by
-  dragging its right edge, or click it for a **Width** slider (§6b). Serializes as
+  lane/row height and adds horizontal space. Its `width` is a **percentage of the
+  player container's width** (default `4`), so the gap keeps its proportion when
+  you switch viewports — and on the real player at any size. Resize it by dragging
+  its right edge, or click it for a **Width** slider (§6b). Serializes as
   `{ custom, kind: "spacer", label, icon, width }`.
 - **Background** (`addBackground`, `kind: "background"`) — a translucent color layer
   behind a lane's controls. Dropped into a lane's items array like any control, it
@@ -631,7 +677,10 @@ Rendered by [`src/ui/toolbar.ts`](./src/ui/toolbar.ts):
   `state.setTheme({ bgColor, bgOpacity })`. Drives **every** background (lane +
   per-icon) at once; previews live, commits on release (one undo step).
 - **Padding** — opens a popover with **Padding X / Padding Y** sliders for the
-  `.Player` container → `state.setTheme({ playerPadX | playerPadY })`.
+  `.Player` container → `state.setTheme({ playerPadX | playerPadY })`. Both are
+  **percentages** (0–10%, 0.5 steps): X of the player's width, Y of its height.
+  Preview writes `--pad-x` / `--pad-y` live and re-snaps the lane backgrounds
+  (padding shifts the lanes); commit stores it (one undo step).
 - **Reset** → `state.resetToDefault()` — restores the full canonical default
   (registry seed + default viewport + default theme, incl. the transport circles).
 - **Clear all** → `state.clear()` (empties the **active** viewport only).
@@ -641,13 +690,15 @@ Rendered by [`src/ui/toolbar.ts`](./src/ui/toolbar.ts):
 ## 8. Build order / checklist
 
 - [ ] `RegionState` with per-viewport `Layouts` + active pointer + the API in §3
-      (single-occurrence, prune-empty, persist). Theme carries background
-      color/opacity + player padding. `snapshot`/`restore` for undo (§3b).
+      (single-occurrence, prune-empty, persist under the `:v2` keys). Theme carries
+      background color/opacity + player padding (**percentages** of the container).
+      `snapshot`/`restore` for undo (§3b).
 - [ ] `reconcileSetting()` on every change (§3a).
 - [ ] `ControlRegistry`: 17 built-ins + custom (icon/text/spacer/background) +
       overrides (identity/glyph only — **no** per-icon size/background), persisted to
-      `player-studio:registry`; `snapshot`/`restore`; `seedDefaults()` seeds the
-      default's custom controls on fresh install + reset (§2b).
+      `player-studio:registry:v2`; `snapshot`/`restore`; `seedDefaults()` seeds the
+      default's custom controls on fresh install + reset (§2b). Glyphs are Material
+      names throughout.
 - [ ] Per-viewport icon **`styles`** (size + background) in each `ViewportLayout`
       (§2), with `sizeOf`/`setSize`/`iconBgOf`/`setIconBg`/`clearIconBg` on the active
       viewport (§3); the default viewport seeds the transport look.
@@ -657,15 +708,16 @@ Rendered by [`src/ui/toolbar.ts`](./src/ui/toolbar.ts):
       background"; per-chip change-icon / reset / delete; disable `Setting` (§6d–g).
 - [ ] Canvas: regions → gaps + rows → 3 lanes with `data-drop`; render by kind
       (icon+size+iconBg / text / slider / spacer / lane-background); no inter-lane
-      gap; re-render on registry changes (§6a).
-- [ ] Property popovers: icon (size + background), spacer (width), background
-      (padding X/Y + radius) — live preview + commit-on-release (§6b).
+      gap; publish `--player-w` / `--player-h` so the % padding and spacer widths
+      resolve; re-render on registry changes (§6a).
+- [ ] Property popovers: icon (size + background, px), spacer (width, **%**),
+      background (padding X/Y + radius, px) — live preview + commit-on-release (§6b).
 - [ ] Expanded drop targets while dragging; clear `dnd-active` before the drop
       re-render so backgrounds snap to the settled lane (§4, §6g).
 - [ ] Toolbar: shared Background color/opacity, Padding tool, Undo/Redo (§7).
 - [ ] Viewport switcher + resize (§6c). Collapse bin (§3a).
 - [ ] `serializeRow` + `buildControlDecls` (identity) + `buildViewportStyles`
-      (per-viewport `size`/`background`) + `buildRegionSpec` → `schemaVersion` "3.1";
+      (per-viewport `size`/`background`) + `buildRegionSpec` → `schemaVersion` "3.2";
       theme with background* + padding*; decls carry spacer `width` / background
       `paddingX/paddingY/radius`; each viewport carries its own `styles`; `controls`
       omitted when empty (§5).
