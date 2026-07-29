@@ -9,28 +9,42 @@ defined in [`spec.md`](./spec.md). The authoring side (dashboard) is in
 > natively per platform, keyed by the control's `gridIdentifier`. The JSON never
 > carries behavior — see [§7](#7-controls-grididentifier).
 
-> **Schema:** this document describes **`schemaVersion` "3.2"** — the single
-> current version. Per-**viewport** entries (`default | 490 | 300 | vertical` —
-> three landscape width breakpoints plus a portrait 9:16 design),
+> **Schema:** there is **one schema** — the one described here, and the document
+> carries **no version field**. Per-**viewport** entries (`default | 490 | 300 |
+> vertical` — three landscape width breakpoints plus a portrait 9:16 design),
 > **collapse-in-Setting**, one shared **`theme`** (colors, sizes, shared background
 > color/opacity, player-container padding), **lane-keyed rows** (`start | center |
-> end`; fill items flagged in a per-lane `fill` list), and an optional top-level
-> **`controls`** block declaring custom controls, text/spacer/background elements,
-> icon overrides, and per-icon appearance (`size`, `background`) — see
+> end`; fill items flagged in a per-lane `fill` list), and a top-level
+> **`controls`** block declaring **every control used in the document** — each
+> one's Material `icon` name, plus the full definition for custom
+> controls and text/spacer/background elements — see
 > [§7b](#7b-the-controls-block).
 
-> **What changed in 3.2** (from 3.1) — three things, everything else is identical:
+> **No versioning, by design.** Don't branch on a version, don't feature-detect,
+> don't keep a compatibility path for an older shape. The server always sends
+> this shape and the player always reads this shape; when the schema changes, the
+> renderers change with it. `layoutModel` names the layout **model** (always
+> `"region"`) — it is not a version.
+
+> **The document is self-describing: you never need an id→glyph table.**
+> `controls` carries the `icon` name for **every** used id, built-ins included, so
+> `"CaptionSearch"` always arrives alongside `"manage_search"`. A contract id is a
+> **behavior** key, not a glyph — nothing in `CaptionSearch` derives
+> `manage_search`, and only 4 of the 17 built-ins survive naive lowercasing. Read
+> the glyph from the JSON; don't hard-code the catalog's default-glyph column
+> ([§7b](#7b-the-controls-block), [§7f](#7f-icons-are-material-names)).
+
+> **Units.** Two measurements are **percentages of the player container**, so a
+> layout keeps its proportions at any render size — the same document looks right
+> on a 320 px phone and a 1080 px web player:
 >
-> | field                                | 3.1                        | 3.2                                              |
-> | ------------------------------------ | -------------------------- | ------------------------------------------------ |
-> | `controls[id].icon`                  | a Lucide export name (`"Play"`) | a **Material icon name** (`"play_arrow"`) — [§7f](#7f-icons-are-material-names) |
-> | `controls[id].width` (spacer)        | px                         | **% of the player container's width**            |
-> | `theme.paddingX` / `paddingY`        | px                         | **% of the container's width / height**          |
+> | field                         | unit                                    |
+> | ----------------------------- | --------------------------------------- |
+> | `controls[id].width` (spacer) | **% of the container's width**          |
+> | `theme.paddingX` / `paddingY` | **% of the container's width / height** |
 >
-> Both units are percentages so a layout keeps its proportions at any render size
-> — the same document looks right on a 320 px phone and a 1080 px web player. All
-> other measurements (`iconSize`, `barHeight`, `gap`, per-icon `size` /
-> `background`, lane-background `paddingX/Y` / `radius`) stay in **px**.
+> Everything else (`iconSize`, `barHeight`, `gap`, per-icon `size` / `background`,
+> lane-background `paddingX/Y` / `radius`) is in **px**.
 
 > **17 reserved built-ins.** All time readouts and three text elements are **text
 > controls** in the `controls` block ([§7c](#7c-text-controls)); the two
@@ -52,10 +66,9 @@ already fetches at init, under a `playerLayout` key:
   "duration": 612.4,
   // ...existing fields...
   "playerLayout": {
-    "schemaVersion": "3.2",
     "layoutModel": "region",
     "theme": { /* shared across viewports */ },
-    "controls": { /* OPTIONAL — see §7b */ },
+    "controls": { /* every used id + its icon name — see §7b */ },
     "viewports": { /* default | 490 | 300 | vertical */ }
   }
 }
@@ -69,9 +82,9 @@ fetch metadata ─► read playerLayout ─► pick viewport (by width) ─► a
               (read `controls` decls)                 (container padding)  (resolve id via `controls`)  (bind by gridIdentifier)
 ```
 
-The server is the source of truth and always sends a correct, current-version
-`region` layout — the player does **not** version-gate or validate the schema. The
-only fallback is when `playerLayout` is entirely **absent** (an older video with no
+The server is the source of truth and always sends a correct `region` layout — the
+player does **not** validate the schema, and there is no version to gate on. The
+only fallback is when `playerLayout` is entirely **absent** (a video with no
 layout): use the player's built-in default. Otherwise render as received.
 
 ---
@@ -80,14 +93,13 @@ layout): use the player's built-in default. Otherwise render as received.
 
 ```jsonc
 {
-  "schemaVersion": "3.2",
   "layoutModel": "region", // always "region"
   "theme": {
     // ONE theme, shared by every viewport
     "primary": "#1e90ff",        // progress fill / active accents
     "secondary": "#ffffff",      // icon + text color
     "iconSize": 22,              // default icon size (px/dp/pt); a control's `size` overrides it
-    "barHeight": 40,
+    "barHeight": 40,             // FIXED constant — see the note below
     "gap": 8,                    // spacing between items INSIDE a lane
     "backgroundColor": "#000000",// shared fill for EVERY background (lane + per-icon)
     "backgroundOpacity": 0.5,    // 0–1, shared
@@ -95,9 +107,11 @@ layout): use the player's built-in default. Otherwise render as received.
     "paddingY": 1                // top+bottom, % of container HEIGHT
   },
   "controls": {
-    // OPTIONAL — IDENTITY only (kind/label/icon/text + spacer width + lane-bg
-    // padding/radius) + icon overrides. Per-icon size/background are PER-VIEWPORT
-    // (viewports[].styles), not here. — see §7b
+    // IDENTITY, one entry per USED id. `icon` is always present — built-ins get
+    // just that; customs get their full definition (kind/label/text extras +
+    // spacer width + lane-bg padding/radius). Per-icon size/background are
+    // PER-VIEWPORT (viewports[].styles), not here. — see §7b
+    "CaptionSearch": { "icon": "manage_search" },
     "CUSTOM_spacer": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "space_bar", "width": 31 }
   },
   "viewports": {
@@ -125,11 +139,26 @@ viewports → regions → rows (stacked) → lanes (start | center | end) → it
   **percentage of the container** — `paddingX` of its width, `paddingY` of its
   height (so the inset scales with the player instead of eating a narrow bar on a
   300 px-wide one). `iconSize` is the default; a control may override it with its
-  own `size` (§7b).
-- **`controls`** (optional, global) is a deduped **identity table**, keyed by id: what
-  each used id _is_ (custom controls' kind/label/icon/text extras, icon overrides,
-  spacer width, lane-background padding/radius) — §7b. It does **not** place or render
-  anything, and it carries **no** per-icon size/background (those are per-viewport).
+  own `size` (§7e).
+
+> **Only four theme fields are author-controlled today**: `primary`, `secondary`,
+> `backgroundColor` / `backgroundOpacity`, and `paddingX` / `paddingY`. **`iconSize`
+> (22), `barHeight` (40), and `gap` (8) are fixed constants** the studio writes on
+> every export — they are not in its editable theme and no UI changes them. Read
+> them from the document anyway (don't hard-code), but don't expect them to vary.
+
+> ⚠️ **`iconSize: 22` does not match the studio's own preview.** An icon with no
+> per-viewport `styles[id].size` renders at **22 px** in the player but at **20 px**
+> on the studio canvas (`DEFAULT_ICON_SIZE`). Unstyled icons therefore come out ~10%
+> larger than the design the author approved. This is a known bug in the authoring
+> side, not something the player should compensate for — **render `theme.iconSize`
+> as given.** Once the studio is fixed the two numbers converge and nothing here
+> changes.
+- **`controls`** (global) is a deduped **identity table**, keyed by id, with **one
+  entry per used id** — what each id _is_: its Material `icon` name always, plus
+  custom controls' kind/label/text extras, spacer width, and lane-background
+  padding/radius — §7b. It does **not** place or render anything, and it carries
+  **no** per-icon size/background (those are per-viewport).
 - **Per-icon appearance is per-viewport.** Each viewport carries its own optional
   **`styles`** map (`{ [id]: { size?, background? } }`, §7e), so the _same_ built-in
   icon (e.g. `Forward`) can be one size with a circle in `default` and a different
@@ -273,9 +302,11 @@ the JSON is simply not rendered.
 
 ### The 17-control catalog (the contract)
 
-The **default glyph** column is the Material icon name the studio draws. It is
-_not_ in the JSON — it's the reference so every platform ships a matching glyph.
-A `controls` entry with an `icon` overrides it ([§7b](#7b-the-controls-block)).
+The **default glyph** column is the Material icon name the studio draws when the
+author hasn't changed it. **Don't hard-code it** — every document states each used
+id's glyph in `controls[id].icon` ([§7b](#7b-the-controls-block)), which is the
+value to render. The column is documentation: it tells you which glyphs your
+platform's Material set should cover, and what a stock bar looks like.
 
 | #   | gridIdentifier     | kind   | default glyph            | render hint                                                      |
 | --- | ------------------ | ------ | ------------------------ | ---------------------------------------------------------------- |
@@ -309,7 +340,7 @@ A `controls` entry with an `icon` overrides it ([§7b](#7b-the-controls-block)).
 
 | kind         | Web                       | Android (Compose)      | iOS (SwiftUI)       |
 | ------------ | ------------------------- | ---------------------- | ------------------- |
-| `icon`       | `<svg>` button            | `Icon` in `IconButton` | `Image` in `Button` |
+| `icon`       | ligature span in a button (or an SVG asset) — §7f | `Icon` in `IconButton` | `Image` in `Button` |
 | `text`       | `<span>`                  | `Text`                 | `Text`              |
 | `slider`     | `<input range>`           | `Slider`               | `Slider`            |
 | `spacer`     | fixed-width blank box     | `Spacer`/`Box(width)`  | `Spacer().frame`    |
@@ -320,21 +351,28 @@ A `controls` entry with an `icon` overrides it ([§7b](#7b-the-controls-block)).
 One map from `gridIdentifier` → render kind + behavior. The layout engine stays
 dumb; the same registry renders a control on the bar or in the Setting menu.
 
+**No `icon` field.** The glyph comes from `controls[id].icon` in the document
+(§7b) — the registry holds only what the JSON can't carry: `kind` and behavior.
+
 ```ts
 const REGISTRY: Record<ControlId, ControlEntry> = {   // 17 built-ins; host may add CUSTOM_* / cdt_* ids
-  PlayNPause:    { kind: "icon", icon: PlayIcon, onActivate: (p) => p.toggle() },
-  Forward:       { kind: "icon", icon: FwdIcon,  onActivate: (p) => p.seek(+10) },
-  Setting:       { kind: "icon", icon: GearIcon, onActivate: (p) => p.toggleSettingMenu() },
+  PlayNPause:    { kind: "icon", onActivate: (p) => p.toggle() },
+  Forward:       { kind: "icon", onActivate: (p) => p.seek(+10) },
+  Setting:       { kind: "icon", onActivate: (p) => p.toggleSettingMenu() },
   VideoProgress: { kind: "slider", /* seek to ratio */ },
-  Volume:        { kind: "icon", icon: VolumeIcon, /* toggle mute + hover slider §7a */ },
+  Volume:        { kind: "icon", /* toggle mute + hover slider §7a */ },
   // …all 17 (time readouts are text controls — §7c)…
 };
 ```
 
-> Iconography for the **17 built-ins** is not shipped in the JSON — native teams
-> provide matching glyphs (the table's default-glyph column is the reference).
-> **Custom controls, overrides, spacers, and backgrounds** _do_ ship a Material
-> icon **name** (a string, never raw SVG) — see
+> A built-in's **`kind`** _is_ still local knowledge — it's absent from the JSON
+> for built-ins (only customs declare `kind`), because kind is bound to behavior.
+> Glyph comes from the document; kind and behavior come from this table.
+
+> **Every** control in the document — built-in or custom — ships its Material icon
+> **name** (a string, never raw SVG) in `controls[id].icon`; resolve that, don't
+> bake a glyph into the registry. Give `REGISTRY` the **behavior** (`onActivate`,
+> `kind`) and let the JSON supply the glyph — see
 > [§7f](#7f-icons-are-material-names). The spacer/background chip glyph is
 > cosmetic (dashboard-only) — the player renders those elements as a gap / a
 > layer, not as an icon.
@@ -359,10 +397,20 @@ the JSON — behavior, implemented per platform:
 
 ## 7b. The `controls` block
 
-An **optional** top-level object, keyed by id, carrying the extra information a stock
-player can't infer. Untouched built-ins never appear; the block is **omitted when
-empty**. Only **used** ids (on a bar or in `collapseInSetting`) are declared. An
-entry can carry any mix of:
+A top-level object keyed by id, carrying everything about a control that isn't its
+position. It holds **one entry for every used id** (anything on a bar or in
+`collapseInSetting`, in any viewport) — including plain, untouched built-ins,
+which appear as a bare `{ "icon": … }`. It is omitted only when the document
+places nothing at all.
+
+> **Why built-ins are in here.** A contract id names **behavior**, not a glyph.
+> `CaptionSearch` → `manage_search`, `Chapters` → `playlist_play`,
+> `SaveVideoOffline` → `download_for_offline` — none of these are derivable, and
+> only 4 of the 17 (`airplay`, `cast`, `fullscreen`, `speed`) match their id when
+> lowercased. If the document didn't state the name, every platform would have to
+> ship a private copy of the studio's default table and keep it in sync forever —
+> one stale copy and the player silently renders a glyph the designer never chose.
+> Stating it makes the document the single source of truth.
 
 > **Declares, doesn't place.** `controls` is a shared lookup table — **one entry per
 > used id**, no matter how many viewports use it. A control **renders in a viewport
@@ -372,22 +420,28 @@ entry can carry any mix of:
 
 ```jsonc
 "controls": {
+  "PlayNPause": { "icon": "play_arrow" },        // stock built-in — its default glyph, stated
+  "CaptionSearch": { "icon": "manage_search" },  // ...not derivable from the id, hence stated
+  "FullScreen": { "icon": "open_in_full" },      // built-in whose glyph the author swapped
   "CUSTOM_like": { "custom": true, "kind": "icon", "label": "Like", "icon": "favorite" }, // custom control
-  "FullScreen": { "icon": "open_in_full" },                                               // icon override
   "CUSTOM_spacer": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "space_bar", "width": 31 },
   "CUSTOM_bg": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 4, "radius": 24 },
   "CUSTOM_time_left": { "custom": true, "kind": "text", "label": "Time Left", "icon": "hourglass_bottom", "textType": "timeLeft" }
 }
 ```
 
+Note that a stock built-in and an author-overridden one are **indistinguishable**,
+by design — both are just `{ "icon": <name> }`. The player has no reason to care
+which it is; it renders the name it's given.
+
 **Field reference** (all optional unless noted):
 
 | field            | on                        | meaning                                                                 |
 | ---------------- | ------------------------- | ----------------------------------------------------------------------- |
+| **`icon`**       | **every entry — required**| the control's Material icon **name** (§7f); the glyph to render, unless this viewport's `styles[id].icon` overrides it (§7e) |
 | `custom: true`   | custom/text/spacer/background | this id has no local catalog entry — fully declared                 |
 | `kind`           | custom entries            | `icon` \| `text` \| `spacer` \| `background`                            |
 | `label`          | custom entries            | display name                                                            |
-| `icon`           | any                       | a Material icon **name** (§7f); overrides the catalog glyph for a built-in |
 | `textType`+extras| text                      | see [§7c](#7c-text-controls)                                            |
 | `width`          | spacer                    | spacer width, **% of the player container's width** (§7d)               |
 | `paddingX/Y`,`radius` | background           | lane-background inset + corner radius (**px**, §7d)                     |
@@ -407,8 +461,11 @@ For any item id (in `items` **or** `collapseInSetting`), pass the **identity** d
 function resolveControl(id, controls, style) {
   const decl = controls[id];
   const kind = decl?.custom ? (decl.kind ?? "icon") : REGISTRY[id].kind;
-  const iconName = decl?.icon ?? CATALOG_ICON[id];            // declared icon WINS
-  const icon = resolveMaterial(iconName) ?? PLACEHOLDER_ICON; // §7f
+  // Glyph: this viewport's override, else the document's declaration. No local
+  // fallback table — the name is in the JSON. (`?? PLACEHOLDER` only guards a
+  // document that omits the field, not a missing catalog entry.)
+  const iconName = style?.icon ?? decl?.icon;                 // §7e wins over §7b
+  const icon = resolveMaterial(iconName) ?? PLACEHOLDER_ICON; // §7f — unknown NAME ⇒ placeholder
   const size = style?.size ?? theme.iconSize;                 // per-VIEWPORT size override
   const iconBg = style?.background;                           // per-VIEWPORT { padding, radius } | undefined
   const width = decl?.width;                                  // spacer — % of the player width
@@ -418,10 +475,13 @@ function resolveControl(id, controls, style) {
 }
 ```
 
+- **Glyph precedence:** `viewports[vp].styles[id].icon` → `controls[id].icon` →
+  placeholder. Exactly the relationship `size` has to `theme.iconSize`: a global
+  default with an optional per-viewport override.
 - **`icon` is always a Material icon name string** (§7f). Map it to your glyph set;
-  placeholder if unknown.
-- A declared `icon` **overrides** the catalog glyph; the id, `kind`, and behavior are
-  otherwise unchanged.
+  placeholder if the **name** is unknown to your Material build.
+- **Don't keep an id→glyph table.** The document states every used id's name; a
+  local table can only drift from what the designer approved.
 - **No built-in behavior for customs.** A custom control renders but does nothing
   unless the **host app** registers a handler for its `CUSTOM_*` id.
 
@@ -554,10 +614,18 @@ icons.
 | ------------ | --------------------------------------------------------------------------- |
 | `size`       | per-icon size (px) for this viewport; overrides `theme.iconSize`            |
 | `background` | `{ padding, radius }` — a shape behind this glyph (§7d); shared theme fill  |
+| `icon`       | **reserved** — per-viewport glyph override; when present it wins over `controls[id].icon` for this viewport only |
 
-- Resolve appearance from **the selected viewport's** `styles[id]`, not the global
-  `controls` block (identity only). Missing `styles` / entry ⇒ `theme.iconSize`, no
-  per-icon background.
+> **`icon` here is reserved, not yet authored.** The dashboard has no per-viewport
+> glyph control today (its icon edits are global), so the studio never writes this
+> field — but **implement the `styles[id].icon ?? controls[id].icon` fallback
+> anyway**. It's one `??`. A shipped mobile SDK sits on user devices for months,
+> so the fallback has to be out in the field *before* the studio can start
+> authoring per-viewport glyphs — not after.
+
+- Resolve appearance from **the selected viewport's** `styles[id]`, falling back to
+  the global `controls` block. Missing `styles` / entry ⇒ `theme.iconSize`, the
+  declared `icon`, no per-icon background.
 - Only icons carry styles. Spacer width and lane-background padding/radius stay in the
   `controls` decl (they're unique per-instance ids, so already per-viewport in
   practice).
@@ -571,7 +639,10 @@ the Material catalog, lower_snake_case: `"play_arrow"`, `"closed_caption"`,
 `"volume_up"`. Never raw SVG, never a per-platform asset path.
 
 ```jsonc
-"controls": { "FullScreen": { "icon": "open_in_full" } }
+"controls": {
+  "CaptionSearch": { "icon": "manage_search" },   // every used id states its name…
+  "FullScreen": { "icon": "open_in_full" }        // …whether stock or author-swapped
+}
 ```
 
 Because the name _is_ the key, every platform looks the same glyph up in its own
@@ -588,8 +659,15 @@ Material set — no mapping table to maintain:
   (the studio uses `help_outline`) and carry on.
 - The dashboard picks from ~2,100 names, so treat the set as open — don't
   hard-code an allow-list.
-- A declared `icon` only replaces the **glyph**. The control's id, `kind`, and
-  behavior are unchanged.
+- A declared `icon` only sets the **glyph**. The control's id, `kind`, and
+  behavior are unchanged — swapping `FullScreen`'s glyph doesn't change what
+  `FullScreen` does.
+- **The name is the whole contract.** Because every used id carries its name,
+  no platform needs an id→glyph mapping table, and the three platforms cannot
+  drift apart: they're all reading the same string the designer approved.
+- **Ship the glyphs the catalog lists.** The default-glyph column in §7 is the
+  minimum set your Material assets should cover, so a stock bar never falls back
+  to placeholders — but resolve at runtime from the JSON, not from that column.
 
 ---
 
@@ -660,6 +738,10 @@ size-class / configuration changes.
 
 ## 9. Samples
 
+> **9a and 9b are single-viewport fragments**, not whole documents — they show a
+> `viewports[…]` entry only. In a real document the ids below also appear in the
+> top-level `controls` block with their glyphs (§7b); 9c–9e are complete.
+
 ### 9a. Space-between row (`start` + `end` lanes)
 
 ```json
@@ -701,9 +783,14 @@ per-viewport **`styles`** (the transport circles; note `PlayNPause` differs betw
 text control, shared **background** color/opacity, percentage player-container
 **padding**, and **collapseInSetting**. Use as the golden fixture for parser tests:
 
+> Its **22 `controls` entries** are the 8 custom controls plus the **14 built-ins**
+> placed across the two authored viewports — every one stating its glyph, none
+> overridden by the author. `"CaptionSearch": { "icon": "manage_search" }` is the
+> case to check your parser on: the id alone would tell a renderer nothing.
+> Entries are keyed, so **iteration order carries no meaning** — don't assert on it.
+
 ```json
 {
-  "schemaVersion": "3.2",
   "layoutModel": "region",
   "theme": {
     "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8,
@@ -711,13 +798,27 @@ text control, shared **background** color/opacity, percentage player-container
   },
   "controls": {
     "CUSTOM_background_3": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 4 },
+    "Cast": { "icon": "cast" },
+    "AirPlay": { "icon": "airplay" },
+    "PictureInPicture": { "icon": "picture_in_picture_alt" },
     "CUSTOM_background_2": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 5, "paddingY": 5, "radius": 0 },
-    "CUSTOM_background": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 4 },
-    "CUSTOM_background_4": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 5, "paddingY": 3, "radius": 0 },
-    "CUSTOM_background_5": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 5, "paddingY": 5, "radius": 0 },
+    "FullScreen": { "icon": "fullscreen" },
     "CUSTOM_spacer_3": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "space_bar", "width": 31 },
+    "Backward": { "icon": "fast_rewind" },
+    "PlayNPause": { "icon": "play_arrow" },
+    "Forward": { "icon": "fast_forward" },
     "CUSTOM_spacer_2": { "custom": true, "kind": "spacer", "label": "Spacer", "icon": "space_bar", "width": 31 },
-    "CUSTOM_time_left": { "custom": true, "kind": "text", "label": "Time Left", "icon": "hourglass_bottom", "textType": "timeLeft" }
+    "Volume": { "icon": "volume_up" },
+    "VideoProgress": { "icon": "linear_scale" },
+    "CUSTOM_background": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 4 },
+    "CUSTOM_time_left": { "custom": true, "kind": "text", "label": "Time Left", "icon": "hourglass_bottom", "textType": "timeLeft" },
+    "Captions": { "icon": "closed_caption" },
+    "Setting": { "icon": "settings" },
+    "Speed": { "icon": "speed" },
+    "CaptionSearch": { "icon": "manage_search" },
+    "CUSTOM_background_5": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 5, "paddingY": 5, "radius": 0 },
+    "CUSTOM_background_4": { "custom": true, "kind": "background", "label": "Background", "icon": "format_color_fill", "paddingX": 5, "paddingY": 3, "radius": 0 },
+    "SaveVideoOffline": { "icon": "download_for_offline" }
   },
   "viewports": {
     "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
@@ -783,15 +884,17 @@ text control, shared **background** color/opacity, percentage player-container
 ### 9d. Custom control + icon override
 
 A `CUSTOM_like` button (Material `favorite`) and `FullScreen` overridden to
-`open_in_full`:
+`open_in_full`. Note `PlayNPause` and `VideoProgress` are declared too, with their
+stock glyphs — an overridden built-in looks exactly like an untouched one:
 
 ```json
 {
-  "schemaVersion": "3.2",
   "layoutModel": "region",
   "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8,
              "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 1.5, "paddingY": 1 },
   "controls": {
+    "VideoProgress": { "icon": "linear_scale" },
+    "PlayNPause": { "icon": "play_arrow" },
     "CUSTOM_like": { "custom": true, "kind": "icon", "label": "Like", "icon": "favorite" },
     "FullScreen": { "icon": "open_in_full" }
   },
@@ -817,11 +920,12 @@ A `CUSTOM_like` button (Material `favorite`) and `FullScreen` overridden to
 
 ```json
 {
-  "schemaVersion": "3.2",
   "layoutModel": "region",
   "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8,
              "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 1.5, "paddingY": 1 },
   "controls": {
+    "VideoProgress": { "icon": "linear_scale" },
+    "FullScreen": { "icon": "fullscreen" },
     "CUSTOM_time_all": { "custom": true, "kind": "text", "label": "Time All", "icon": "av_timer",
                          "textType": "timeAll", "separator": " / " },
     "cdt_promoName": { "custom": true, "kind": "text", "label": "cdt_promoName", "icon": "data_object",
@@ -858,8 +962,9 @@ the schema. Cases it still handles:
 | Selected viewport has no rows              | fall through to the next wider; `default` is base             |
 | Empty/omitted region                       | render nothing for it (valid)                                 |
 | `collapseInSetting` empty                  | no Setting menu (and `Setting` absent from bar)               |
-| `controls` block absent                    | render every id from the local catalog                        |
+| `controls` block absent / an id missing from it | nothing is placed, or a malformed document: render the id's `kind` + behavior from the registry and draw a placeholder glyph — §7f |
 | Declared `icon` name unknown to this Material build | draw a placeholder glyph (don't fail) — §7f          |
+| `styles[id].icon` present                  | use it for this viewport, over `controls[id].icon` — §7e      |
 | `CUSTOM_*` control with no host handler    | render its glyph; activation is a no-op (decorative)          |
 | Text control (`kind: "text"`, `textType`)  | render by `textType` (§7c); passive readout                   |
 | `dynamicText` variable not set by host     | render empty until the host sets the `cdt_*` variable         |
@@ -879,11 +984,15 @@ the schema. Cases it still handles:
 - [ ] Resolve the viewport by player width; **re-resolve on resize** (§3).
 - [ ] Walk each row's lanes `start → center → end`; item gap = `theme.gap`, no gap
       between lanes; implement the three alignments + `fill` (§6).
-- [ ] Build the `gridIdentifier → {kind, icon, behavior}` registry (all 17).
+- [ ] Build the `gridIdentifier → {kind, behavior}` registry (all 17). **No `icon`
+      field, and no id→glyph table anywhere** — glyphs come from the document (§7b).
 - [ ] Parse `controls` for identity (glyph/kind/label/text extras, spacer width,
-      lane-bg padding/radius) — §7b — with a declared `icon` overriding the catalog
-      glyph. **Every `icon` is a Material icon name** — resolve it in your platform's
-      Material set, placeholder if unknown (§7f).
+      lane-bg padding/radius) — §7b. **Every used id has an entry carrying its
+      `icon`**, built-ins included. Resolve the name in your platform's Material
+      set, placeholder if unknown (§7f).
+- [ ] Resolve a glyph as `styles[id].icon ?? controls[id].icon` — the per-viewport
+      override is reserved and unwritten today; implement the `??` now so the
+      studio can start authoring it without waiting on an SDK rollout (§7e).
 - [ ] Render `kind: "text"` by `textType`; wire `dynamicText` to host `cdt_*`
       variables (§7c).
 - [ ] Render **spacers** as gaps `width`% of the **player container's width** wide,

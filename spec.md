@@ -29,7 +29,7 @@ in [`old_spec.md`](./old_spec.md) and is **superseded** by this document — see
                  │   Player Studio (web)   │   authoring tool
                  │   exports player.json   │
                  └────────────┬────────────┘
-                              │  one versioned contract
+                              │  one shared contract
           ┌───────────────────┼───────────────────┐
           ▼                   ▼                   ▼
       Web renderer      Android renderer      iOS renderer
@@ -89,7 +89,6 @@ empty spacer.
 
 ```jsonc
 {
-  "schemaVersion": "3.0",
   "theme": {
     "primary":   "#1e90ff",   // progress / active accents
     "secondary": "#ffffff",   // icons / text
@@ -129,7 +128,6 @@ The current default layout, expressed in this model:
 
 ```json
 {
-  "schemaVersion": "3.0",
   "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8 },
   "regions": {
     "top": [
@@ -199,24 +197,27 @@ flag needed).
 
 ---
 
-## 6b. Custom controls & icon overrides (`controls` block)
+## 6b. The `controls` block
 
-The 21 ids above are the **reserved** contract — a stock renderer already knows
-their glyph and behavior. Two authoring features need the schema to carry *extra*
-information, both via an optional top-level **`controls`** object keyed by id
-(`schemaVersion` ≥ `2.1`):
+The reserved ids above are the **behavior** contract — a stock renderer knows what
+each one *does*. What it cannot know is what each one *looks like*: an id names
+behavior, not a glyph (`CaptionSearch` does not derive `manage_search`). So a
+top-level **`controls`** object, keyed by id, declares **every control used in the
+document**:
 
-1. **Custom controls** — a user adds their own control (a new chip) whose glyph is
+1. **Every used id** — including plain built-ins nobody edited — carries its
+   Material `icon` name, so no platform needs an id→glyph table of its own.
+2. **Icon overrides** — when a user swaps a built-in's glyph (e.g. give
+   `FullScreen` a different icon), the same field simply holds the new name. The id
+   stays a reserved built-in and its behavior is unchanged; a stock and an
+   overridden built-in are indistinguishable on the wire, by design.
+3. **Custom controls** — a user adds their own control (a new chip) whose glyph is
    **any Material icon**. Its id is `CUSTOM_<slug>` (the `CUSTOM_` prefix guarantees
    no collision with the reserved ids). Because no platform has a default for it, it
    is **fully declared**: `custom`, `kind`, `label`, and `icon`.
-2. **Icon overrides** — a user swaps the glyph of a built-in (e.g. give `FullScreen`
-   a different icon). The id stays a reserved built-in (behavior unchanged); only the
-   new glyph rides along.
 
 ```jsonc
 {
-  "schemaVersion": "3.0",
   // …theme / viewports…
   "controls": {
     "CUSTOM_like": {                 // custom control — full declaration
@@ -278,12 +279,17 @@ This spec defines **layout and style**, not:
 
 ---
 
-## 9. Versioning & validation
+## 9. Validation
 
-- `schemaVersion` is **required**. Bump the major on breaking changes; renderers
-  must reject a major they don't understand.
+- **There is one schema, and the document is unversioned.** No `schemaVersion`
+  field, no negotiation, no compatibility branches: the studio emits this shape and
+  every renderer reads this shape. Changing the shape means changing the renderers
+  with it — that coordination is the design, not a gap in it. (`layoutModel` names
+  the layout **model**, not a version.)
 - Ship a JSON Schema (`player.schema.json`) so the studio's export and each
-  native parser validate against one definition. Validate in CI on both ends.
+  native parser validate against one definition. Validate in CI on both ends —
+  with no version to fall back on, one definition enforced everywhere *is* the
+  safety net.
 
 ---
 

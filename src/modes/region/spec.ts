@@ -1,20 +1,22 @@
-// Region mode native spec (spec.md): schemaVersion 3.2, layoutModel "region".
-// Generated directly from the native region state (exact, not derived). `regions`
-// live under per-viewport entries (default | 490 | 300 | vertical); each viewport also
+// Region mode native spec (spec.md), layoutModel "region". Generated directly
+// from the native region state (exact, not derived). `regions` live under
+// per-viewport entries (default | 490 | 300 | vertical); each viewport also
 // carries its `collapseInSetting` icon list. Theme is shared across viewports.
 //
-// schemaVersion 3.0 replaces the ordered `align` group array with a lane-keyed
-// row: `start` | `center` | `end` → { items, fill? }, empty lanes omitted. Fill
-// controls stay inline in their lane's `items` (their position in the sequence
-// is preserved); the lane's `fill` list only flags which of them stretch.
-// The 2.1 `controls` block (declarations for custom / overridden controls) is
-// unchanged.
+// A row is lane-keyed: `start` | `center` | `end` → { items, fill? }, empty
+// lanes omitted. Fill controls stay inline in their lane's `items` (their
+// position in the sequence is preserved); the lane's `fill` list only flags
+// which of them stretch.
 //
-// schemaVersion 3.2 changes two units and one vocabulary: an `icon` is a
-// MATERIAL icon name (its own catalog key, e.g. "play_arrow") instead of a
-// Lucide export name, a spacer's `width` is a PERCENTAGE of the player
-// container's width, and theme.paddingX / paddingY are PERCENTAGES of the
-// container's width / height. Everything else is 3.1.
+// An `icon` is a MATERIAL icon name (its own catalog key, e.g. "play_arrow"); a
+// spacer's `width` and theme.paddingX / paddingY are PERCENTAGES of the player
+// container. The `controls` block declares EVERY used id so each carries its
+// icon name — see buildControlDecls.
+//
+// There is ONE schema — this one. The document carries no version field: it is
+// produced and consumed by the current code on both sides, so there is nothing
+// to negotiate and no older shape to stay compatible with. Changing the shape
+// means changing the renderers, not adding a branch.
 
 import type { ControlId } from "../../controls";
 import { isFill, registry } from "../../registry";
@@ -57,16 +59,24 @@ function collectUsedIds(state: RegionState): Set<ControlId> {
   return ids;
 }
 
-// Declarations for used controls that a renderer can't resolve on its own —
-// IDENTITY only (custom kind/label/icon/text + spacer width + lane-background
-// padding/radius), plus an icon override's replacement glyph. Per-icon size and
-// per-icon background are per-VIEWPORT and emitted in each viewport's `styles`
-// (see buildViewportStyles), not here.
+// IDENTITY declarations for EVERY control used in the document — its Material
+// `icon` name always, plus (for customs) kind/label/text extras, spacer width,
+// and lane-background padding/radius.
+//
+// Every used id gets an entry, built-in or not, because a contract id is a
+// BEHAVIOR key, not a glyph: nothing in "CaptionSearch" derives "manage_search",
+// and only 4 of the 17 built-ins (airplay / cast / fullscreen / speed) survive
+// naive lowercasing. Emitting the name for stock built-ins too keeps the document
+// self-describing, so no platform has to ship — and keep in sync — its own copy
+// of the BUILTINS table (controls.ts). A renderer resolves the name in its own
+// Material set; it never needs a default table.
+//
+// Per-icon size and per-icon background are per-VIEWPORT and emitted in each
+// viewport's `styles` (see buildViewportStyles), not here.
 function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const id of used) {
     const custom = registry.isCustom(id);
-    if (!custom && !registry.isOverridden(id)) continue;
     const def = registry.get(id);
     out[id] = custom
       ? {
@@ -89,6 +99,8 @@ function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
           ...(def?.kind === "background" && def?.paddingY !== undefined ? { paddingY: def.paddingY } : {}),
           ...(def?.kind === "background" && def?.radius !== undefined ? { radius: def.radius } : {}),
         }
+      // Built-in: its effective glyph — the override when one is set, otherwise
+      // the catalog default. Either way the name is stated, never implied.
       : { icon: registry.iconOf(id) };
   }
   return out;
@@ -131,9 +143,6 @@ export function buildRegionSpec(state: RegionState) {
   }
   const controls = buildControlDecls(collectUsedIds(state));
   return {
-    // 3.2: Material icon names, spacer width and container padding as
-    // percentages (see the header note).
-    schemaVersion: "3.2",
     layoutModel: "region" as const,
     theme: {
       primary: theme.primary,
@@ -149,7 +158,7 @@ export function buildRegionSpec(state: RegionState) {
       paddingX: theme.playerPadX,
       paddingY: theme.playerPadY,
     },
-    // Omit when empty so default layouts stay byte-for-byte as before.
+    // Only empty when the document places nothing at all.
     ...(Object.keys(controls).length ? { controls } : {}),
     viewports,
   };

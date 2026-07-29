@@ -12,23 +12,39 @@ This doc generalizes the working code in [`src/modes/region/`](./src/modes/regio
 [`src/history.ts`](./src/history.ts), [`src/dnd.ts`](./src/dnd.ts), and
 [`src/ui/`](./src/ui/).
 
-> **Schema:** the dashboard emits **`schemaVersion` "3.2"** — the single current
-> version. Per-**viewport** layouts (`default | 490 | 300 | vertical` — three
+> **Schema:** there is **one schema**, and the emitted document carries **no
+> version field**. Per-**viewport** layouts (`default | 490 | 300 | vertical` — three
 > landscape width breakpoints plus a portrait 9:16 design) of lane-keyed
 > rows, each viewport with its own `collapseInSetting` list, under one shared
-> `theme`, plus an optional top-level **`controls`** block declaring the custom
-> controls, text/spacer/background elements, icon overrides, and per-icon
-> appearance (`size`, `background`) used anywhere in the document
+> `theme`, plus a top-level **`controls`** block declaring **every control used
+> anywhere in the document** — each one's Material `icon` name, and the full
+> definition for custom controls and text/spacer/background elements
 > ([§2b](#2b-the-control-registry) / [§5](#5-serializer--internal-model--output-json)).
 
-> **What changed in 3.2** (from 3.1): an `icon` is a **Material icon name**
-> (`"play_arrow"`, lower_snake_case — the icon's own catalog key) instead of a
-> Lucide export name ([§2b](#icons-are-material-names)); a **spacer's `width`** is a
-> **% of the player container's width**; and **`theme.paddingX` / `paddingY`** are
-> **percentages** of the container's width / height. Everything else is unchanged,
-> and every other measurement (icon `size`, lane-background padding/radius) stays
-> in px. Both storage keys are `:v2` — a pre-3.2 save would read `200` px as 200%,
-> so old local state is retired rather than migrated.
+> **The dashboard's job is to emit a self-describing document.** A control id is
+> a **behavior** contract key, not a glyph: nothing in `CaptionSearch` derives
+> `manage_search`, and only 4 of the 17 built-ins match their id when lowercased.
+> So the serializer writes the icon name for **every** placed control, including
+> stock built-ins nobody edited — the design a user approves in the studio is then
+> fully reconstructible from the JSON, with no id→glyph table on any platform.
+> See [§5](#the-controls-block-identity--per-viewport-styles-appearance).
+
+> **Units.** An `icon` is a **Material icon name** (`"play_arrow"`,
+> lower_snake_case — the icon's own catalog key,
+> [§2b](#icons-are-material-names)). A **spacer's `width`** and
+> **`theme.paddingX` / `paddingY`** are **percentages of the player container**
+> (width; width / height); every other measurement (icon `size`, lane-background
+> padding/radius) is in px.
+
+> **No schema version.** The dashboard and the renderers ship against one schema;
+> the document has no version field and nothing negotiates. Changing the emitted
+> shape means updating the player implementations alongside it — that coordination
+> is the design, not a gap in it.
+>
+> The two **`localStorage`** keys still carry a `:v2` suffix. That is unrelated to
+> the wire format: it retires local state saved back when spacer width and player
+> padding were in **px**, which a percentage-reading build would misread as `200`
+> → 200%. Local state is dropped rather than migrated.
 
 > **17 built-ins.** All time readouts (`TimeConsumed`, `TimeLeft`,
 > `TimeDuration`, `TimeAll`), plus Current Chapter, Dynamic Text, and Title, are
@@ -109,6 +125,11 @@ type Layouts = Record<Viewport, ViewportLayout>;
 
 // Shared across viewports. The one place background color/opacity and the
 // player-container padding live.
+//
+// NOTE: this is the WHOLE editable theme — six fields. The exported document's
+// `theme` also carries `iconSize` (22), `barHeight` (40), and `gap` (8), which
+// are NOT here: the serializer writes them as fixed literals (§5) and no UI
+// changes them.
 interface Theme {
   primary: string; // progress fill / active accents
   secondary: string; // icon + text color
@@ -120,6 +141,15 @@ interface Theme {
   playerPadY: number; // top+bottom, % of the container's HEIGHT
 }
 ```
+
+> ⚠️ **Known bug — the emitted `iconSize` doesn't match the canvas.** The
+> serializer writes `theme.iconSize: 22`, but an icon with no per-viewport size
+> renders on the canvas at `DEFAULT_ICON_SIZE` = **20** (`state.sizeOf` falls back
+> to it). So every unstyled icon reaches the player ~10% larger than the author
+> saw. Fix by reconciling the two constants — either emit `DEFAULT_ICON_SIZE`
+> instead of the literal `22` in [`spec.ts`](./src/modes/region/spec.ts), or raise
+> `DEFAULT_ICON_SIZE` to 22 in [`controls.ts`](./src/controls.ts). `gap: 8` matches
+> the canvas (`--gap: 8px`); `barHeight: 40` has no canvas counterpart at all.
 
 - The store holds **four independent viewport layouts** + one **active viewport**
   pointer. All mutating ops act on the active viewport only — so **placing, moving, or
@@ -188,7 +218,7 @@ the source of truth for _what a control is_ (identity + glyph); per-viewport
 appearance (icon size/background) lives in `RegionState` (§3). The layout state
 (§2/§3) only references ids.
 
-It owns three things, all persisted together to `player-studio:registry`
+It owns three things, all persisted together to `player-studio:registry:v2`
 (viewport-agnostic — no per-icon size/background here):
 
 |                     | what                                                             |
@@ -208,7 +238,7 @@ class ControlRegistry {
   // NOTE: per-icon size + background are per-VIEWPORT — see RegionState (§3).
 
   // creators
-  addCustom({ label, icon }): ControlId;   // a CUSTOM_<slug> icon control
+  addCustom({ label, icon, kind? }): ControlId; // CUSTOM_<slug>; kind defaults to "icon"
   addText({ textType, separator?, variable?, showNumber? }): ControlId; // §6f
   addSpacer(): ControlId;                  // kind "spacer", width 4 (% of player width) (§6g)
   addBackground(): ControlId;              // kind "background" (§6g)
@@ -251,9 +281,17 @@ exposes the ~2,100-name catalog to the icon picker. The catalog itself is the
   placed control's glyph should query `.mi` and write `font-size`, not `svg`
   width/height attributes.
 - Unknown names fall back to `help_outline`.
-- The same name is written into the `controls` block (§5), so the schema stays
-  portable: each platform looks the name up in its own Material set (see
+- The same name is written into the `controls` block (§5) for **every used
+  control** — an overridden built-in, a custom control, and a stock built-in the
+  user never touched all serialize their effective glyph. That's what keeps the
+  schema portable: each platform looks the name up in its own Material set and
+  needs no default table of its own (see
   [`PLAYER_IMPLEMENTATION.md` §7f](./PLAYER_IMPLEMENTATION.md#7f-icons-are-material-names)).
+- **`iconOf(id)` is viewport-agnostic** — one glyph per control id, globally.
+  The wire format reserves a per-viewport override at `viewports[vp].styles[id].icon`
+  (parallel to how `size` overrides `theme.iconSize`), but the studio has no UI for
+  it and never writes it; `setIcon` applies to every viewport. Wiring that feature
+  later means making the registry viewport-keyed — the schema is already ready.
 
 - A registry edit fans out as a normal change: `Studio` re-emits on
   `registry.subscribe`, so palette, canvas, and the code panel all refresh live.
@@ -313,9 +351,10 @@ Invariants baked into the store:
 - **Persist** to `localStorage` (`player-studio:region-layout:v2`) as
   `{ layouts, theme, active }`. The registry persists **separately**
   (`player-studio:registry:v2`), so clearing a layout never wipes custom controls.
-  Both keys carry the `:v2` suffix because 3.2 changed the units of the padding
-  and spacer-width fields they hold (§ schema note) — a v1 save is dropped, not
-  migrated, so it can't be read as a 200% spacer.
+  Both keys carry a `:v2` suffix because the padding and spacer-width fields they
+  hold changed units (px → % of the player) — a v1 save is dropped, not migrated,
+  so it can't be read as a 200% spacer. This is **local-state** hygiene only; the
+  emitted document is unversioned (§ schema note).
 - **Registry-aware load:** the `registry` singleton constructs (and loads/seeds) at
   import time, _before_ any `RegionState`, so layout sanitization can resolve custom
   ids; an id whose `registry.get(id)` is undefined is **dropped** (evicts ghost ids).
@@ -416,17 +455,30 @@ function serializeRow(row: Row): SerializedRow {
 ### The `controls` block (identity) + per-viewport `styles` (appearance)
 
 `controls` is a **deduped identity table** — one entry per used id, no matter how
-many viewports place it — for ids the player can't resolve on its own: **custom
-controls** (icon/text/spacer/background) and **icon-overridden built-ins**. It carries
-**no** per-icon size/background (those are per-viewport); stock built-ins stay id-only;
-the block is **omitted when empty**.
+many viewports place it. **Every** used id gets an entry: customs
+(icon/text/spacer/background) carry a full definition, and every other control —
+including stock built-ins the user never edited — carries at least its Material
+`icon` name. It holds **no** per-icon size/background (those are per-viewport), and
+is omitted only when the document places nothing at all.
+
+> **Why stock built-ins are emitted.** A `gridIdentifier` is a **behavior**
+> contract key and does not encode a glyph. `CaptionSearch` → `manage_search`,
+> `Chapters` → `playlist_play`, `PictureInPicture` → `picture_in_picture_alt`:
+> none derive, and only `airplay` / `cast` / `fullscreen` / `speed` survive naive
+> lowercasing. Omitting the name would push a private copy of `BUILTINS`
+> ([`src/controls.ts`](./src/controls.ts)) onto web, Android, and iOS — three
+> copies to keep in sync, and a stale one renders a glyph the designer never
+> picked, silently. `registry.iconOf(id)` already returns the **effective** glyph
+> (override ?? catalog default), so emitting it unconditionally costs one dropped
+> `continue` and ~40 bytes per control.
 
 ```ts
 function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
   const out = {};
   for (const id of used) {
+    // NOTE: no `isOverridden` early-continue — a stock built-in is declared too,
+    // so the document never leaves a glyph implied.
     const custom = registry.isCustom(id);
-    if (!custom && !registry.isOverridden(id)) continue;
     const def = registry.get(id);
     out[id] = custom
       ? {
@@ -443,7 +495,7 @@ function buildControlDecls(used: Set<ControlId>): Record<string, unknown> {
           ...(def?.kind === "background" && def?.paddingY !== undefined ? { paddingY: def.paddingY } : {}),
           ...(def?.kind === "background" && def?.radius !== undefined ? { radius: def.radius } : {}),
         }
-      : { icon: registry.iconOf(id) }; // icon override → replacement glyph only
+      : { icon: registry.iconOf(id) }; // built-in → its effective glyph (override ?? default)
   }
   return out;
 }
@@ -469,6 +521,15 @@ function buildViewportStyles(state: RegionState, vp: Viewport): Record<string, u
   **spacer** carries `width` (**% of the player container's width**); both are unique
   `CUSTOM_*` ids, so per-instance. A **per-icon size/background** rides in each
   viewport's `styles`, not the decl.
+- A stock built-in and an author-overridden one serialize **identically**
+  (`{ "icon": <name> }`) — by design. `isOverridden` is a studio-side concept (it
+  drives the palette's ↺ reset affordance, §6d); the player only needs the glyph.
+- `buildViewportStyles` may also emit an **`icon`** per viewport — the wire format
+  reserves it as a per-viewport glyph override that wins over the `controls` decl.
+  The studio doesn't write it (icon edits are global, §2b). The slot is documented
+  now so renderers implement the `??` in their current release: a shipped mobile
+  SDK lives on devices for months, so the reader has to be in the field before the
+  studio can start authoring it.
 
 ### Whole-document build
 
@@ -489,8 +550,7 @@ function buildRegionSpec(state: RegionState) {
   }
   const controls = buildControlDecls(collectUsedIds(state));
   return {
-    schemaVersion: "3.2",
-    layoutModel: "region",
+    layoutModel: "region", // names the layout MODEL, not a version
     theme: {
       primary: theme.primary,
       secondary: theme.secondary,
@@ -502,7 +562,7 @@ function buildRegionSpec(state: RegionState) {
       paddingX: theme.playerPadX, // container padding, % of its WIDTH
       paddingY: theme.playerPadY, // ...and % of its HEIGHT
     },
-    ...(Object.keys(controls).length ? { controls } : {}), // omit when empty
+    ...(Object.keys(controls).length ? { controls } : {}), // only empty if nothing is placed
     viewports,
   };
 }
@@ -717,10 +777,15 @@ Rendered by [`src/ui/toolbar.ts`](./src/ui/toolbar.ts):
 - [ ] Toolbar: shared Background color/opacity, Padding tool, Undo/Redo (§7).
 - [ ] Viewport switcher + resize (§6c). Collapse bin (§3a).
 - [ ] `serializeRow` + `buildControlDecls` (identity) + `buildViewportStyles`
-      (per-viewport `size`/`background`) + `buildRegionSpec` → `schemaVersion` "3.2";
+      (per-viewport `size`/`background`) + `buildRegionSpec` (**no version field** —
+      `layoutModel: "region"` only);
       theme with background* + padding*; decls carry spacer `width` / background
       `paddingX/paddingY/radius`; each viewport carries its own `styles`; `controls`
-      omitted when empty (§5).
+      omitted only when nothing is placed (§5).
+- [ ] **Declare every used id in `controls`, each with its `icon`** — stock
+      built-ins included, not just customs and overrides. Assert it: for the
+      default document, every id in any viewport's `regions` / `collapseInSetting`
+      resolves to a `controls[id].icon` (22 entries — 8 custom + 14 built-in) (§5).
 - [ ] `state.subscribe` → code panel / `console.log` (swap for API later).
 - [ ] Verify the default output round-trips through the player
       ([`PLAYER_IMPLEMENTATION.md` §9c](./PLAYER_IMPLEMENTATION.md#9c-full-document-the-canonical-fixture)).
