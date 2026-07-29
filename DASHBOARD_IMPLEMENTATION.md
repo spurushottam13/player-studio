@@ -4,8 +4,12 @@ How the **dashboard** lets a user drag controls onto a player mock, switch
 **viewports**, style them, fold controls into **Setting**, undo/redo, and emit the
 Regional Layout JSON. For now the output target is `console.log` / a live code
 panel; later it posts to the layout API. The consumer side (player) is in
-[`PLAYER_IMPLEMENTATION.md`](./PLAYER_IMPLEMENTATION.md); the contract is
-[`spec.md`](./spec.md).
+[`PLAYER_IMPLEMENTATION.md`](./PLAYER_IMPLEMENTATION.md).
+
+> **This document is the contract for the authoring side.** It is kept in step
+> with the code in [`src/`](./src/). [`spec.md`](./spec.md) is **background and
+> rationale** — the model's goals and why it replaced the grid model — and it
+> predates the per-viewport layout; where the two disagree, this document wins.
 
 This doc generalizes the working code in [`src/modes/region/`](./src/modes/region/)
 (editor, state, spec), [`src/registry.ts`](./src/registry.ts),
@@ -40,6 +44,11 @@ This doc generalizes the working code in [`src/modes/region/`](./src/modes/regio
 > the document has no version field and nothing negotiates. Changing the emitted
 > shape means updating the player implementations alongside it — that coordination
 > is the design, not a gap in it.
+>
+> Because there is no version to fall back on, **one shared JSON Schema
+> (`player.schema.json`) validated in CI on both ends** — this serializer's output
+> and each native parser — is what keeps the platforms honest. It is the safety
+> net a version field would otherwise pretend to be.
 >
 > The two **`localStorage`** keys still carry a `:v2` suffix. That is unrelated to
 > the wire format: it retires local state saved back when spacer width and player

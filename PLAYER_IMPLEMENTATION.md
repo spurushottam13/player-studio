@@ -1,9 +1,14 @@
 # Player Implementation — Regional Layout
 
 How the **player** consumes the Regional Layout JSON delivered in the metadata API
-and renders the control bar from it. This is the consumer side of the contract
-defined in [`spec.md`](./spec.md). The authoring side (dashboard) is in
+and renders the control bar from it. The authoring side (dashboard) is in
 [`DASHBOARD_IMPLEMENTATION.md`](./DASHBOARD_IMPLEMENTATION.md).
+
+> **This document is the contract for the consumer side.** It is kept in step with
+> the authoring tool's serializer, and its §9 fixtures are that serializer's real
+> output. [`spec.md`](./spec.md) is **background and rationale** — the model's
+> goals and why it replaced the grid model — and it predates the per-viewport
+> layout; where the two disagree, this document wins.
 
 > **Scope:** layout + style only. _Behavior_ (what `PlayNPause` does) is wired
 > natively per platform, keyed by the control's `gridIdentifier`. The JSON never
@@ -25,6 +30,11 @@ defined in [`spec.md`](./spec.md). The authoring side (dashboard) is in
 > this shape and the player always reads this shape; when the schema changes, the
 > renderers change with it. `layoutModel` names the layout **model** (always
 > `"region"`) — it is not a version.
+>
+> Because there is no version to fall back on, **one shared JSON Schema
+> (`player.schema.json`) validated in CI on both ends** — the studio's export and
+> each native parser — is what keeps the platforms honest. It is the safety net
+> a version field would otherwise pretend to be.
 
 > **The document is self-describing: you never need an id→glyph table.**
 > `controls` carries the `icon` name for **every** used id, built-ins included, so
