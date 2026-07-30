@@ -18,6 +18,7 @@
 // to negotiate and no older shape to stay compatible with. Changing the shape
 // means changing the renderers, not adding a branch.
 
+import { DEFAULT_ICON_SIZE } from "../../controls";
 import type { ControlId } from "../../controls";
 import { isFill, registry } from "../../registry";
 import { LANES, REGION_NAMES, VIEWPORTS } from "./state";
@@ -147,8 +148,11 @@ export function buildRegionSpec(state: RegionState) {
     theme: {
       primary: theme.primary,
       secondary: theme.secondary,
-      iconSize: 22,
-      barHeight: 40,
+      // The SAME constant the canvas renders an unstyled icon at (state.sizeOf
+      // falls back to it), so what the author approves is what the player draws.
+      // These were two independent literals — 20 here, 22 emitted — and every
+      // unstyled icon reached the player ~10% larger than designed.
+      iconSize: DEFAULT_ICON_SIZE,
       gap: 8,
       // Shared across all background layers.
       backgroundColor: theme.bgColor,

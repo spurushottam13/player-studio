@@ -48,7 +48,6 @@ export interface Layouts {
     primary: string;
     secondary: string;
     iconSize: number; // global default; a control's `size` overrides it
-    barHeight: number;
     gap: number;
     backgroundColor: string; // shared fill for ALL background layers
     backgroundOpacity: number; // 0–1, shared

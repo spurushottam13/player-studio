@@ -35,6 +35,19 @@ and renders the control bar from it. The authoring side (dashboard) is in
 > (`player.schema.json`) validated in CI on both ends** — the studio's export and
 > each native parser — is what keeps the platforms honest. It is the safety net
 > a version field would otherwise pretend to be.
+>
+> **It lives in the player repo**, alongside the type for the whole metadata
+> response (`playerLayout` is one field of it). Two things that decides:
+> it must be **published as a consumable artifact**, not copied — a per-repo copy
+> drifts exactly like the id→glyph table this contract deleted — and the **JSON
+> Schema, not the TypeScript type, is the shared artifact**, since Android and iOS
+> cannot consume a `.d.ts`. Generate the TS type from the schema so they cannot
+> disagree.
+>
+> Make it **enumerate the reserved control ids**. A loose schema
+> (`controls: {[id: string]: {icon: string}}`) validates a document whose ids no
+> renderer implements; an `enum` of the reserved ids plus patterns for `CUSTOM_*`
+> and `cdt_*` is what turns catalog drift into a failing build.
 
 > **The document is self-describing: you never need an id→glyph table.**
 > `controls` carries the `icon` name for **every** used id, built-ins included, so
@@ -53,7 +66,7 @@ and renders the control bar from it. The authoring side (dashboard) is in
 > | `controls[id].width` (spacer) | **% of the container's width**          |
 > | `theme.paddingX` / `paddingY` | **% of the container's width / height** |
 >
-> Everything else (`iconSize`, `barHeight`, `gap`, per-icon `size` / `background`,
+> Everything else (`iconSize`, `gap`, per-icon `size` / `background`,
 > lane-background `paddingX/Y` / `radius`) is in **px**.
 
 > **17 reserved built-ins.** All time readouts and three text elements are **text
@@ -108,8 +121,7 @@ layout): use the player's built-in default. Otherwise render as received.
     // ONE theme, shared by every viewport
     "primary": "#1e90ff",        // progress fill / active accents
     "secondary": "#ffffff",      // icon + text color
-    "iconSize": 22,              // default icon size (px/dp/pt); a control's `size` overrides it
-    "barHeight": 40,             // FIXED constant — see the note below
+    "iconSize": 20,              // default icon size (px/dp/pt); a control's `size` overrides it
     "gap": 8,                    // spacing between items INSIDE a lane
     "backgroundColor": "#000000",// shared fill for EVERY background (lane + per-icon)
     "backgroundOpacity": 0.5,    // 0–1, shared
@@ -153,17 +165,19 @@ viewports → regions → rows (stacked) → lanes (start | center | end) → it
 
 > **Only four theme fields are author-controlled today**: `primary`, `secondary`,
 > `backgroundColor` / `backgroundOpacity`, and `paddingX` / `paddingY`. **`iconSize`
-> (22), `barHeight` (40), and `gap` (8) are fixed constants** the studio writes on
+> (20) and `gap` (8) are fixed constants** the studio writes on
 > every export — they are not in its editable theme and no UI changes them. Read
 > them from the document anyway (don't hard-code), but don't expect them to vary.
 
-> ⚠️ **`iconSize: 22` does not match the studio's own preview.** An icon with no
-> per-viewport `styles[id].size` renders at **22 px** in the player but at **20 px**
-> on the studio canvas (`DEFAULT_ICON_SIZE`). Unstyled icons therefore come out ~10%
-> larger than the design the author approved. This is a known bug in the authoring
-> side, not something the player should compensate for — **render `theme.iconSize`
-> as given.** Once the studio is fixed the two numbers converge and nothing here
-> changes.
+> **`iconSize` moved from 22 to 20 — render it as given.** The authoring tool used
+> to emit `22` while its canvas drew unstyled icons at `20`, so every unstyled icon
+> reached the player ~10% larger than the author approved. Both sides now read one
+> constant and the emitted value is **20**.
+>
+> Documents already stored keep whatever value they were saved with — this is a
+> serializer change, so only newly saved layouts carry 20. **Never substitute a
+> local default for `theme.iconSize`**, and never "correct" it: a player that
+> hard-codes either number will be wrong for half the corpus.
 - **`controls`** (global) is a deduped **identity table**, keyed by id, with **one
   entry per used id** — what each id _is_: its Material `icon` name always, plus
   custom controls' kind/label/text extras, spacer width, and lane-background
@@ -328,13 +342,13 @@ platform's Material set should cover, and what a stock bar looks like.
 | 6   | `Chapters`         | icon   | `playlist_play`          |                                                                  |
 | 7   | `Forward`          | icon   | `fast_forward`           |                                                                  |
 | 8   | `FullScreen`       | icon   | `fullscreen`             |                                                                  |
-| 9   | `Notification`     | icon   | `notifications`          |                                                                  |
+| 9   | `Notification`     | icon   | `notifications`          | **icon only** — draw the glyph, never a composite/info strip     |
 | 10  | `PictureInPicture` | icon   | `picture_in_picture_alt` |                                                                  |
 | 11  | `PlayNPause`       | icon   | `play_arrow`             |                                                                  |
 | 12  | `Quality`          | icon   | `high_quality`           |                                                                  |
 | 13  | `SaveVideoOffline` | icon   | `download_for_offline`   |                                                                  |
 | 14  | `Setting`          | icon   | `settings`               | menu container — auto-managed ([§4](#4-collapse-in-setting))     |
-| 15  | `Speed`            | icon   | `speed`                  |                                                                  |
+| 15  | `Speed`            | icon   | `speed`                  | **icon only** — never a rate readout; activating it opens the rate picker |
 | 16  | `VideoProgress`    | slider | `linear_scale`           | typically `fill`                                                 |
 | 17  | `Volume`           | icon   | `volume_up`              | on-demand hover slider — [§7a](#7a-volume--the-hover-slider)     |
 
@@ -345,6 +359,18 @@ platform's Material set should cover, and what a stock bar looks like.
 > A built-in's **kind** is _not_ in the JSON — the player knows it from this
 > catalog. Custom / text / spacer / background controls _do_ carry their `kind` in
 > `controls`, since the player has no catalog entry for them.
+
+> **Every `kind: icon` control on the bar draws exactly one glyph — no exceptions.**
+> A control whose *value* is interesting (`Speed`'s current rate, `Volume`'s level,
+> `Quality`'s resolution) still renders as its glyph; the value belongs in the panel
+> that activating it opens, not on the bar. This is what makes the catalog's `kind`
+> column trustworthy: if the contract says `icon` and the authoring tool lets a
+> designer set that glyph's size and background, the bar must honour all three.
+>
+> `Speed` and `Notification` are the two that historically diverged — a live `1.5x`
+> readout and an info-strip composite. Both are now **icon only**. Every styling
+> choice the author makes (glyph, `size`, per-icon `background`) applies to them
+> exactly as it does to any other icon.
 
 ### kind → how to render
 
@@ -702,7 +728,6 @@ function applyTheme(root, t) {
   root.style.setProperty("--primary", t.primary);
   root.style.setProperty("--secondary", t.secondary);
   root.style.setProperty("--gap", `${t.gap}px`);
-  root.style.setProperty("--bar-height", `${t.barHeight}px`);
   root.style.setProperty("--icon-size", `${t.iconSize}px`);
   root.style.setProperty("--bg-fill", rgba(t.backgroundColor, t.backgroundOpacity));
   // Container padding is a PERCENTAGE: X of the player's width, Y of its HEIGHT.
@@ -803,7 +828,7 @@ text control, shared **background** color/opacity, percentage player-container
 {
   "layoutModel": "region",
   "theme": {
-    "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8,
+    "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 20, "gap": 8,
     "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 1.5, "paddingY": 1
   },
   "controls": {
@@ -831,8 +856,8 @@ text control, shared **background** color/opacity, percentage player-container
     "SaveVideoOffline": { "icon": "download_for_offline" }
   },
   "viewports": {
-    "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
     "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
+    "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
     "default": {
       "regions": {
         "top": [
@@ -900,7 +925,7 @@ stock glyphs — an overridden built-in looks exactly like an untouched one:
 ```json
 {
   "layoutModel": "region",
-  "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8,
+  "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 20, "gap": 8,
              "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 1.5, "paddingY": 1 },
   "controls": {
     "VideoProgress": { "icon": "linear_scale" },
@@ -909,6 +934,8 @@ stock glyphs — an overridden built-in looks exactly like an untouched one:
     "FullScreen": { "icon": "open_in_full" }
   },
   "viewports": {
+    "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
+    "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
     "default": {
       "regions": {
         "top": [], "center": [],
@@ -919,8 +946,6 @@ stock glyphs — an overridden built-in looks exactly like an untouched one:
       },
       "collapseInSetting": []
     },
-    "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
-    "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
     "vertical": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] }
   }
 }
@@ -931,7 +956,7 @@ stock glyphs — an overridden built-in looks exactly like an untouched one:
 ```json
 {
   "layoutModel": "region",
-  "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 22, "barHeight": 40, "gap": 8,
+  "theme": { "primary": "#1e90ff", "secondary": "#ffffff", "iconSize": 20, "gap": 8,
              "backgroundColor": "#000000", "backgroundOpacity": 0.5, "paddingX": 1.5, "paddingY": 1 },
   "controls": {
     "VideoProgress": { "icon": "linear_scale" },
@@ -942,6 +967,8 @@ stock glyphs — an overridden built-in looks exactly like an untouched one:
                        "textType": "dynamicText", "variable": "cdt_promoName" }
   },
   "viewports": {
+    "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
+    "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
     "default": {
       "regions": {
         "top": [], "center": [],
@@ -952,8 +979,6 @@ stock glyphs — an overridden built-in looks exactly like an untouched one:
       },
       "collapseInSetting": []
     },
-    "490": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
-    "300": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] },
     "vertical": { "regions": { "top": [], "center": [], "bottom": [] }, "collapseInSetting": [] }
   }
 }
@@ -987,7 +1012,7 @@ the schema. Cases it still handles:
 ## 11. Checklist for the player team
 
 - [ ] Read `playerLayout` from metadata; default only if absent.
-- [ ] Apply the global `theme`: colors, gap, `iconSize`/`barHeight`, the shared
+- [ ] Apply the global `theme`: colors, `gap`, `iconSize`, the shared
       background fill (`backgroundColor` @ `backgroundOpacity`), and the container
       **padding** — `paddingX` is a **% of the container's width**, `paddingY` a
       **% of its height** (§6); recompute on resize.

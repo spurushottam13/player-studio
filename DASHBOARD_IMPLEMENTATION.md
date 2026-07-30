@@ -50,10 +50,18 @@ This doc generalizes the working code in [`src/modes/region/`](./src/modes/regio
 > and each native parser — is what keeps the platforms honest. It is the safety
 > net a version field would otherwise pretend to be.
 >
-> The two **`localStorage`** keys still carry a `:v2` suffix. That is unrelated to
-> the wire format: it retires local state saved back when spacer width and player
-> padding were in **px**, which a percentage-reading build would misread as `200`
-> → 200%. Local state is dropped rather than migrated.
+> **The schema is owned by the player repo**, which also holds the type for the
+> whole metadata response. This serializer is therefore a *consumer*: pull the
+> published schema and validate the emitted document against it in CI. **Do not
+> keep a local copy** — a second copy drifts exactly like the id→glyph table this
+> contract deleted, and it would drift silently, since both sides would still pass
+> their own tests.
+>
+> The two **`localStorage`** keys carry a **version suffix**. That is unrelated to
+> the wire format — it retires local state whose stored shape, units, or ids have
+> changed, dropping it rather than migrating. The suffix is per-build: this
+> prototype is at `:v2`, and a downstream build that has since renamed its
+> built-in ids will legitimately be further along. See §3.
 
 > **17 built-ins.** All time readouts (`TimeConsumed`, `TimeLeft`,
 > `TimeDuration`, `TimeAll`), plus Current Chapter, Dynamic Text, and Title, are
@@ -136,9 +144,9 @@ type Layouts = Record<Viewport, ViewportLayout>;
 // player-container padding live.
 //
 // NOTE: this is the WHOLE editable theme — six fields. The exported document's
-// `theme` also carries `iconSize` (22), `barHeight` (40), and `gap` (8), which
-// are NOT here: the serializer writes them as fixed literals (§5) and no UI
-// changes them.
+// `theme` also carries `iconSize` and `gap` (8), which are NOT here and no UI
+// changes them. `iconSize` is DEFAULT_ICON_SIZE (20) — the same constant the
+// canvas uses; `gap` is a literal in the serializer (§5).
 interface Theme {
   primary: string; // progress fill / active accents
   secondary: string; // icon + text color
@@ -151,14 +159,20 @@ interface Theme {
 }
 ```
 
-> ⚠️ **Known bug — the emitted `iconSize` doesn't match the canvas.** The
-> serializer writes `theme.iconSize: 22`, but an icon with no per-viewport size
-> renders on the canvas at `DEFAULT_ICON_SIZE` = **20** (`state.sizeOf` falls back
-> to it). So every unstyled icon reaches the player ~10% larger than the author
-> saw. Fix by reconciling the two constants — either emit `DEFAULT_ICON_SIZE`
-> instead of the literal `22` in [`spec.ts`](./src/modes/region/spec.ts), or raise
-> `DEFAULT_ICON_SIZE` to 22 in [`controls.ts`](./src/controls.ts). `gap: 8` matches
-> the canvas (`--gap: 8px`); `barHeight: 40` has no canvas counterpart at all.
+> **`iconSize` is one constant now — keep it that way.** The serializer used to
+> write the literal `22` while the canvas drew unstyled icons at
+> `DEFAULT_ICON_SIZE` = 20, so every unstyled icon reached the player ~10% larger
+> than the author saw. Both now read `DEFAULT_ICON_SIZE`
+> ([`controls.ts`](./src/controls.ts)), and the emitted value is **20** — the
+> canvas is the truth, since it is what the author approved.
+>
+> ⚠️ **`gap` is the same defect, not yet bitten.** The canvas gets `8` from
+> `--gap: 8px` in the stylesheet and the serializer writes the literal `8`
+> independently. They agree today, and nothing enforces it.
+>
+> The rule: **any value that both the canvas and the serializer need must come
+> from one constant.** Two literals that happen to agree is the bug that already
+> shipped once.
 
 - The store holds **four independent viewport layouts** + one **active viewport**
   pointer. All mutating ops act on the active viewport only — so **placing, moving, or
@@ -227,7 +241,8 @@ the source of truth for _what a control is_ (identity + glyph); per-viewport
 appearance (icon size/background) lives in `RegionState` (§3). The layout state
 (§2/§3) only references ids.
 
-It owns three things, all persisted together to `player-studio:registry:v2`
+It owns three things, all persisted together to the version-suffixed registry key
+(`player-studio:registry:v2` here — see §3)
 (viewport-agnostic — no per-icon size/background here):
 
 |                     | what                                                             |
@@ -357,13 +372,20 @@ Invariants baked into the store:
   drop the id from wherever it was.
 - **Prune empty rows** and notify subscribers after every mutation.
 - **Setting is auto-managed** — §3a.
-- **Persist** to `localStorage` (`player-studio:region-layout:v2`) as
+- **Persist** to `localStorage` (`player-studio:region-layout:<version>`) as
   `{ layouts, theme, active }`. The registry persists **separately**
-  (`player-studio:registry:v2`), so clearing a layout never wipes custom controls.
-  Both keys carry a `:v2` suffix because the padding and spacer-width fields they
-  hold changed units (px → % of the player) — a v1 save is dropped, not migrated,
-  so it can't be read as a 200% spacer. This is **local-state** hygiene only; the
-  emitted document is unversioned (§ schema note).
+  (`player-studio:registry:<version>`), so clearing a layout never wipes custom controls.
+  Both keys carry a **version suffix**, and the rule — not the number — is the
+  contract: **bump it whenever the stored shape, units, or ids change, and drop
+  old state rather than migrating it.** This prototype is at `:v2` (units went
+  px → % of the player; a v1 save would be read as a 200% spacer). A downstream
+  build that has since renamed built-in ids will legitimately be at `:v3` or
+  beyond — don't "correct" it back to match this doc, that would resurrect exactly
+  the stale saves the bump retired.
+
+  This is **local-state** hygiene only, entirely independent of the wire format,
+  which is unversioned (§ schema note). Nothing about the emitted document depends
+  on this suffix.
 - **Registry-aware load:** the `registry` singleton constructs (and loads/seeds) at
   import time, _before_ any `RegionState`, so layout sanitization can resolve custom
   ids; an id whose `registry.get(id)` is undefined is **dropped** (evicts ghost ids).
@@ -563,8 +585,7 @@ function buildRegionSpec(state: RegionState) {
     theme: {
       primary: theme.primary,
       secondary: theme.secondary,
-      iconSize: 22,
-      barHeight: 40,
+      iconSize: DEFAULT_ICON_SIZE, // 20 — the SAME constant the canvas renders at
       gap: 8,
       backgroundColor: theme.bgColor, // shared across all backgrounds
       backgroundOpacity: theme.bgOpacity,
@@ -759,13 +780,13 @@ Rendered by [`src/ui/toolbar.ts`](./src/ui/toolbar.ts):
 ## 8. Build order / checklist
 
 - [ ] `RegionState` with per-viewport `Layouts` + active pointer + the API in §3
-      (single-occurrence, prune-empty, persist under the `:v2` keys). Theme carries
+      (single-occurrence, prune-empty, persist under version-suffixed keys). Theme carries
       background color/opacity + player padding (**percentages** of the container).
       `snapshot`/`restore` for undo (§3b).
 - [ ] `reconcileSetting()` on every change (§3a).
 - [ ] `ControlRegistry`: 17 built-ins + custom (icon/text/spacer/background) +
       overrides (identity/glyph only — **no** per-icon size/background), persisted to
-      `player-studio:registry:v2`; `snapshot`/`restore`; `seedDefaults()` seeds the
+      the version-suffixed registry key; `snapshot`/`restore`; `seedDefaults()` seeds the
       default's custom controls on fresh install + reset (§2b). Glyphs are Material
       names throughout.
 - [ ] Per-viewport icon **`styles`** (size + background) in each `ViewportLayout`
